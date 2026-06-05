@@ -71,8 +71,7 @@ export const shouldShowDonation = (): boolean => {
   if (!date) return true;
   try {
     if (date && isValid(parseInt(date))) {
-      if (differenceInDays(new Date(), new Date(parseInt(date))) >= 7)
-        return true;
+      if (differenceInDays(new Date(), new Date(parseInt(date))) >= 7) return true;
       return false;
     }
     return true;
@@ -91,17 +90,10 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
     return false;
   };
 
-  const {
-    onEditingHosts,
-    onResetAllUsage,
-    onEditingNodes,
-    onShowingNodesUsage,
-  } = useDashboard();
+  const { onEditingHosts, onResetAllUsage, onEditingNodes, onShowingNodesUsage } = useDashboard();
   const { t } = useTranslation();
   const { colorMode, toggleColorMode } = useColorMode();
-  const [showDonationNotif, setShowDonationNotif] = useState(
-    shouldShowDonation()
-  );
+  const [showDonationNotif, setShowDonationNotif] = useState(shouldShowDonation());
   const gBtnColor = colorMode === "dark" ? "dark_dimmed" : colorMode;
 
   const handleOnClose = () => {
@@ -123,9 +115,7 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
       <Text as="h1" fontWeight="semibold" fontSize="2xl">
         {t("users")}
       </Text>
-      {showDonationNotif && (
-        <NotificationCircle top="0" right="0" zIndex={9999} />
-      )}
+      {showDonationNotif && <NotificationCircle top="0" right="0" zIndex={9} />}
       <Box overflow="auto" css={{ direction: "rtl" }}>
         <HStack alignItems="center">
           <Menu>
@@ -143,20 +133,10 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
             <MenuList minW="170px" zIndex={99999} className="menuList">
               {isSudo() && (
                 <>
-                  <MenuItem
-                    maxW="170px"
-                    fontSize="sm"
-                    icon={<HostsIcon />}
-                    onClick={onEditingHosts.bind(null, true)}
-                  >
+                  <MenuItem maxW="170px" fontSize="sm" icon={<HostsIcon />} onClick={onEditingHosts.bind(null, true)}>
                     {t("header.hostSettings")}
                   </MenuItem>
-                  <MenuItem
-                    maxW="170px"
-                    fontSize="sm"
-                    icon={<NodesIcon />}
-                    onClick={onEditingNodes.bind(null, true)}
-                  >
+                  <MenuItem maxW="170px" fontSize="sm" icon={<NodesIcon />} onClick={onEditingNodes.bind(null, true)}>
                     {t("header.nodeSettings")}
                   </MenuItem>
                   <MenuItem
@@ -185,10 +165,7 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
                   position="relative"
                   onClick={handleOnClose}
                 >
-                  {t("header.donation")}{" "}
-                  {showDonationNotif && (
-                    <NotificationCircle top="3" right="2" />
-                  )}
+                  {t("header.donation")} {showDonationNotif && <NotificationCircle top="3" right="2" />}
                 </MenuItem>
               </Link>
               <Link to="/login">
