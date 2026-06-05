@@ -150,6 +150,12 @@ const CoreSettingModalContent: FC = () => {
                   <Suspense fallback={<JsonEditorLoader />}>
                     <JsonEditor
                       json={config}
+                      onSave={() => {
+                        const submitBtn = document.getElementById("save-core-settings-btn");
+                        if (submitBtn) {
+                          submitBtn.click();
+                        }
+                      }}
                       onChange={(...props) => {
                         field.onChange(...props);
                         const value = props[0];
@@ -219,6 +225,7 @@ const CoreSettingModalContent: FC = () => {
               type="submit"
               isDisabled={isLoading || isPostLoading}
               isLoading={isPostLoading}
+              id="save-core-settings-btn"
             >
               {t("core.save")}
             </Button>

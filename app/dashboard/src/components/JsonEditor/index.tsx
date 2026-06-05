@@ -19,6 +19,7 @@ let schemaRegistered = false;
 export type JSONEditorProps = {
   onChange: (value: string) => void;
   json: any;
+  onSave?: () => void;
 };
 
 const initEditor = async (json: object, colorMode: "light" | "dark") => {
@@ -53,7 +54,7 @@ const initEditor = async (json: object, colorMode: "light" | "dark") => {
 };
 const initializeEditorPromise = initEditor({}, "dark");
 
-export const JsonEditor = forwardRef<HTMLDivElement, JSONEditorProps>(({ json, onChange }, ref) => {
+export const JsonEditor = forwardRef<HTMLDivElement, JSONEditorProps>(({ json, onChange, onSave }, ref) => {
   use(highlighterPromise);
   use(initializeEditorPromise);
   const schema = use(schemaImportPromise);
@@ -90,6 +91,12 @@ export const JsonEditor = forwardRef<HTMLDivElement, JSONEditorProps>(({ json, o
       });
 
       const contentDisposable = editor.getModel()?.onDidChangeContent(debounce(() => onChange(editor.getValue()), 100));
+
+      if (onSave) {
+        editorInstance.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+          onSave();
+        });
+      }
 
       return () => {
         pasteDisposable.dispose();
