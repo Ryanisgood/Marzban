@@ -43,7 +43,13 @@ import dayjs from "dayjs";
 import { FC, useEffect, useState } from "react";
 import ReactApexChart from "react-apexcharts";
 import ReactDatePicker from "react-datepicker";
-import { Controller, FormProvider, useForm, useWatch } from "react-hook-form";
+import {
+  Controller,
+  FormProvider,
+  Resolver,
+  useForm,
+  useWatch,
+} from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import {
   ProxyKeys,
@@ -128,11 +134,11 @@ const getDefaultValues = (): FormType => {
 
 const mergeProxies = (
   proxyKeys: ProxyKeys,
-  proxyType: ProxyType | undefined
+  proxyType: ProxyType | undefined,
 ): ProxyType => {
   const proxies: ProxyType = proxyKeys.reduce(
     (ac, a) => ({ ...ac, [a]: {} }),
-    {}
+    {},
   );
   if (!proxyType) return proxies;
   proxyKeys.forEach((proxy) => {
@@ -240,7 +246,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
   const form = useForm<FormType>({
     defaultValues: getDefaultValues(),
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema) as Resolver<FormType>,
   });
 
   useEffect(
@@ -249,9 +255,9 @@ export const UserDialog: FC<UserDialogProps> = () => {
         (state) => state.inbounds,
         () => {
           form.reset(getDefaultValues());
-        }
+        },
       ),
-    []
+    [],
   );
 
   const [dataLimit, userStatus] = useWatch({
@@ -302,8 +308,8 @@ export const UserDialog: FC<UserDialogProps> = () => {
           : "no_reset",
       status:
         values.status === "active" ||
-          values.status === "disabled" ||
-          values.status === "on_hold"
+        values.status === "disabled" ||
+        values.status === "on_hold"
           ? values.status
           : "active",
     };
@@ -313,7 +319,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
         toast({
           title: t(
             isEditing ? "userDialog.userEdited" : "userDialog.userCreated",
-            { username: values.username }
+            { username: values.username },
           ),
           status: "success",
           isClosable: true,
@@ -333,7 +339,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
               {
                 type: "custom",
                 message: err.response._data.detail[key],
-              }
+              },
             );
           });
         }
@@ -458,7 +464,10 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                     return (
                                       <Tooltip
                                         placement="top"
-                                        label={"status: " + t(`status.${field.value}`)}
+                                        label={
+                                          "status: " +
+                                          t(`status.${field.value}`)
+                                        }
                                         textTransform="capitalize"
                                       >
                                         <Box>
@@ -563,15 +572,18 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                   }}
                                   sx={{
                                     option: {
-                                      backgroundColor: colorMode === "dark" ? "#222C3B" : "white"
-                                    }
+                                      backgroundColor:
+                                        colorMode === "dark"
+                                          ? "#222C3B"
+                                          : "white",
+                                    },
                                   }}
                                 >
                                   {resetStrategy.map((s) => {
                                     return (
                                       <option key={s.value} value={s.value}>
                                         {t(
-                                          "userDialog.resetStrategy" + s.title
+                                          "userDialog.resetStrategy" + s.title,
                                         )}
                                       </option>
                                     );
@@ -627,12 +639,12 @@ export const UserDialog: FC<UserDialogProps> = () => {
                             render={({ field }) => {
                               function createDateAsUTC(num: number) {
                                 return dayjs(
-                                  dayjs(num * 1000).utc()
+                                  dayjs(num * 1000).utc(),
                                   // .format("MMMM D, YYYY") // exception with: dayjs.locale(lng);
                                 ).toDate();
                               }
                               const { status, time } = relativeExpiryDate(
-                                field.value
+                                field.value,
                               );
                               return (
                                 <>
@@ -648,19 +660,19 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                     onChange={(date: Date) => {
                                       form.setValue(
                                         "on_hold_expire_duration",
-                                        null
+                                        null,
                                       );
                                       field.onChange({
                                         target: {
                                           value: date
                                             ? dayjs(
-                                              dayjs(date)
-                                                .set("hour", 23)
-                                                .set("minute", 59)
-                                                .set("second", 59)
-                                            )
-                                              .utc()
-                                              .valueOf() / 1000
+                                                dayjs(date)
+                                                  .set("hour", 23)
+                                                  .set("minute", 59)
+                                                  .set("second", 59),
+                                              )
+                                                .utc()
+                                                .valueOf() / 1000
                                             : 0,
                                           name: "expire",
                                         },
@@ -755,7 +767,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
                     <FormErrorMessage>
                       {t(
                         form.formState.errors.selected_proxies
-                          ?.message as string
+                          ?.message as string,
                       )}
                     </FormErrorMessage>
                   </FormControl>

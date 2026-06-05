@@ -46,7 +46,7 @@ import {
   useNodesQuery,
 } from "contexts/NodesContext";
 import { FC, ReactNode, useState } from "react";
-import { Controller, useForm, UseFormReturn } from "react-hook-form";
+import { Controller, Resolver, useForm, UseFormReturn } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import {
   UseMutateFunction,
@@ -107,7 +107,7 @@ const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
   const toast = useToast();
   const form = useForm<NodeType>({
     defaultValues: node,
-    resolver: zodResolver(NodeSchema),
+    resolver: zodResolver(NodeSchema) as Resolver<NodeType>,
   });
   const handleDeleteNode = setDeletingNode.bind(null, node);
 
@@ -127,14 +127,14 @@ const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
       onSuccess: () => {
         queryClient.invalidateQueries(FetchNodesQueryKey);
       },
-    }
+    },
   );
 
   const nodeStatus: Status = isReconnecting
     ? "connecting"
     : node.status
-    ? node.status
-    : "error";
+      ? node.status
+      : "error";
 
   return (
     <AccordionItem
@@ -177,7 +177,9 @@ const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
                 </Text>
               </Badge>
             )}
-            {node.status && <NodeModalStatusBadge status={nodeStatus} compact />}
+            {node.status && (
+              <NodeModalStatusBadge status={nodeStatus} compact />
+            )}
           </HStack>
         </HStack>
         <AccordionIcon />
@@ -246,7 +248,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
   const queryClient = useQueryClient();
   const { addNode } = useNodes();
   const form = useForm<NodeType>({
-    resolver: zodResolver(NodeSchema),
+    resolver: zodResolver(NodeSchema) as Resolver<NodeType>,
     defaultValues: {
       ...getNodeDefaultValues(),
       add_as_new_host: false,
@@ -256,7 +258,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
     onSuccess: () => {
       generateSuccessMessage(
         t("nodes.addNodeSuccess", { name: form.getValues("name") }),
-        toast
+        toast,
       );
       queryClient.invalidateQueries(FetchNodesQueryKey);
       form.reset();
@@ -370,7 +372,9 @@ const NodeForm: NodeFormType = ({
                   size="xs"
                   download="ssl_client_cert.pem"
                   href={URL.createObjectURL(
-                    new Blob([nodeSettings.certificate], { type: "text/plain" })
+                    new Blob([nodeSettings.certificate], {
+                      type: "text/plain",
+                    }),
                   )}
                 >
                   {t("nodes.download-certificate")}
@@ -380,14 +384,14 @@ const NodeForm: NodeFormType = ({
                   label={t(
                     !showCertificate
                       ? "nodes.show-certificate"
-                      : "nodes.show-certificate"
+                      : "nodes.show-certificate",
                   )}
                 >
                   <IconButton
                     aria-label={t(
                       !showCertificate
                         ? "nodes.show-certificate"
-                        : "nodes.show-certificate"
+                        : "nodes.show-certificate",
                     )}
                     onClick={setShowCertificate.bind(null, !showCertificate)}
                     colorScheme="whiteAlpha"
@@ -482,7 +486,7 @@ const NodeForm: NodeFormType = ({
           </Box>
         </HStack>
         <HStack alignItems="flex-start" w="100%">
-        <Box>
+          <Box>
             <CustomInput
               label={t("nodes.nodePort")}
               size="sm"

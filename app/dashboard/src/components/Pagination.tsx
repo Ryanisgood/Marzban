@@ -46,7 +46,7 @@ const MINIMAL_PAGE_ITEM_COUNT = 5;
 function generatePageItems(total: number, current: number, width: number) {
   if (width < MINIMAL_PAGE_ITEM_COUNT) {
     throw new Error(
-      `Must allow at least ${MINIMAL_PAGE_ITEM_COUNT} page items`
+      `Must allow at least ${MINIMAL_PAGE_ITEM_COUNT} page items`,
     );
   }
   if (width % 2 === 0) {
@@ -57,18 +57,18 @@ function generatePageItems(total: number, current: number, width: number) {
   }
   const left = Math.max(
     0,
-    Math.min(total - width, current - Math.floor(width / 2))
+    Math.min(total - width, current - Math.floor(width / 2)),
   );
   const items: (string | number)[] = new Array(width);
   for (let i = 0; i < width; i += 1) {
     items[i] = i + left;
   }
   // replace non-ending items with placeholders
-  if (items[0] > 0) {
+  if (Number(items[0]) > 0) {
     items[0] = 0;
     items[1] = "prev-more";
   }
-  if (items[items.length - 1] < total - 1) {
+  if (Number(items[items.length - 1]) < total - 1) {
     items[items.length - 1] = total - 1;
     items[items.length - 2] = "next-more";
   }
@@ -133,7 +133,12 @@ export const Pagination: FC = () => {
         </HStack>
       </Box>
 
-      <ButtonGroup size="sm" isAttached variant="outline" order={{ base: 1, md: 2 }}>
+      <ButtonGroup
+        size="sm"
+        isAttached
+        variant="outline"
+        order={{ base: 1, md: 2 }}
+      >
         <Button
           leftIcon={<PrevIcon />}
           onClick={changePage.bind(null, page - 1)}

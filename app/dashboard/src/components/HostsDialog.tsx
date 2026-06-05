@@ -153,8 +153,8 @@ const hostsSchema = z.record(
       alpn: z.string(),
       fingerprint: z.string(),
       use_sni_as_host: z.boolean().default(false),
-    })
-  )
+    }),
+  ),
 );
 
 const Error = chakra(FormErrorMessage, {
@@ -669,7 +669,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                               placeholder={String(inbound.port || "8080")}
                               type="number"
                               {...form.register(
-                                hostKey + "." + index + ".port"
+                                hostKey + "." + index + ".port",
                               )}
                             />
                           </FormControl>
@@ -784,7 +784,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                               borderRadius="4px"
                               placeholder="Host (e.g. example.com)"
                               {...form.register(
-                                hostKey + "." + index + ".host"
+                                hostKey + "." + index + ".host",
                               )}
                             />
                             {accordionErrors &&
@@ -832,7 +832,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                               borderRadius="4px"
                               placeholder="path (e.g. /vless)"
                               {...form.register(
-                                hostKey + "." + index + ".path"
+                                hostKey + "." + index + ".path",
                               )}
                             />
                             {accordionErrors &&
@@ -872,7 +872,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                             <Select
                               size="sm"
                               {...form.register(
-                                hostKey + "." + index + ".security"
+                                hostKey + "." + index + ".security",
                               )}
                             >
                               {proxyHostSecurity.map((s) => {
@@ -899,7 +899,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                             <Select
                               size="sm"
                               {...form.register(
-                                hostKey + "." + index + ".alpn"
+                                hostKey + "." + index + ".alpn",
                               )}
                             >
                               {proxyALPN.map((s) => {
@@ -926,7 +926,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                             <Select
                               size="sm"
                               {...form.register(
-                                hostKey + "." + index + ".fingerprint"
+                                hostKey + "." + index + ".fingerprint",
                               )}
                             >
                               {proxyFingerprint.map((s) => {
@@ -989,7 +989,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                               borderRadius="4px"
                               placeholder="Fragment settings by pattern"
                               {...form.register(
-                                hostKey + "." + index + ".fragment_setting"
+                                hostKey + "." + index + ".fragment_setting",
                               )}
                             />
                             {accordionErrors &&
@@ -1053,7 +1053,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                               borderRadius="4px"
                               placeholder="Noise settings by pattern"
                               {...form.register(
-                                hostKey + "." + index + ".noise_setting"
+                                hostKey + "." + index + ".noise_setting",
                               )}
                             />
                             {accordionErrors &&
@@ -1067,7 +1067,6 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                               )}
                           </FormControl>
 
-
                           <FormControl
                             isInvalid={
                               !!(
@@ -1078,7 +1077,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                           >
                             <Checkbox
                               {...form.register(
-                                hostKey + "." + index + ".use_sni_as_host"
+                                hostKey + "." + index + ".use_sni_as_host",
                               )}
                             >
                               <FormLabel>
@@ -1094,8 +1093,8 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                                   }
                                 </Error>
                               )}
-                        </FormControl>
-                         <FormControl
+                          </FormControl>
+                          <FormControl
                             isInvalid={
                               !!(
                                 accordionErrors &&
@@ -1105,7 +1104,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                           >
                             <Checkbox
                               {...form.register(
-                                hostKey + "." + index + ".allowinsecure"
+                                hostKey + "." + index + ".allowinsecure",
                               )}
                               name={hostKey + "." + index + ".allowinsecure"}
                             >
@@ -1133,7 +1132,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                           >
                             <Checkbox
                               {...form.register(
-                                hostKey + "." + index + ".mux_enable"
+                                hostKey + "." + index + ".mux_enable",
                               )}
                             >
                               <FormLabel>
@@ -1157,7 +1156,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({
                           >
                             <Checkbox
                               {...form.register(
-                                hostKey + "." + index + ".random_user_agent"
+                                hostKey + "." + index + ".random_user_agent",
                               )}
                             >
                               <FormLabel>
@@ -1209,7 +1208,7 @@ export const HostsDialog: FC = () => {
   useEffect(() => {
     if (isEditingHosts) fetchHosts();
   }, [isEditingHosts]);
-  const form = useForm<z.infer<typeof hostsSchema>>({
+  const form = useForm({
     resolver: zodResolver(hostsSchema),
   });
 

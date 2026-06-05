@@ -13,6 +13,7 @@ import { queryClient } from "utils/react-query";
 import { updateThemeColor } from "utils/themeColor";
 import { theme } from "../chakra.config";
 import App from "./App";
+import "./index.css";
 import "index.scss";
 
 dayjs.extend(Timezone);
@@ -24,11 +25,9 @@ dayjs.extend(Duration);
 updateThemeColor(localStorageManager.get() || "light");
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <ChakraProvider theme={theme}>
-      <QueryClientProvider client={queryClient}>
-        <App />
-      </QueryClientProvider>
-    </ChakraProvider>
-  </React.StrictMode>
+  <ChakraProvider theme={theme}>
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  </ChakraProvider>,
 );
