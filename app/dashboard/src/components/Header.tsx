@@ -123,11 +123,7 @@ export const Header: FC<HeaderProps> = ({ actions }) => {
               as={IconButton}
               size="sm"
               variant="outline"
-              icon={
-                <>
-                  <SettingsIcon />
-                </>
-              }
+              icon={<SettingsIcon />}
               position="relative"
             ></MenuButton>
             <MenuList minW="170px" zIndex={99999} className="menuList">
