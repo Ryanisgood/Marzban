@@ -269,8 +269,8 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                     cursor="pointer"
                     p={0}
                     border={0}
-                    h="auto"
-                    w="auto"
+                    h="full"
+                    w="full"
                     icon={<></>}
                     _focusVisible={{
                       border: "0 !important",
@@ -423,7 +423,7 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
               </HStack>
             </Th>
             <Th position="sticky" top={{ base: "unset", md: top }} width="400px" minW="150px" cursor={"pointer"}>
-              <HStack position="relative" gap={"5px"}>
+              <HStack position="relative" gap={"5px"} css={{ "& .chakra-select__wrapper": { height: "100%" } }}>
                 <Box className="relative">
                   <Text
                     _dark={{
@@ -448,10 +448,10 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                     top={0}
                     right={0}
                     position="absolute"
+                    h="full"
                     w="full"
                     p={0}
                     border={0}
-                    h="auto"
                     icon={<></>}
                     _focusVisible={{
                       border: "0 !important",
