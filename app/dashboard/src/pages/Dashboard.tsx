@@ -13,15 +13,42 @@ import { ResetUserUsageModal } from "components/ResetUserUsageModal";
 import { RevokeSubscriptionModal } from "components/RevokeSubscriptionModal";
 import { UserDialog } from "components/UserDialog";
 import { UsersTable } from "components/UsersTable";
-import { fetchInbounds, useDashboard } from "contexts/DashboardContext";
+import { fetchInbounds, FilterType, useDashboard } from "contexts/DashboardContext";
 import { FC, useEffect } from "react";
 import { Statistics } from "../components/Statistics";
+import debounce from "lodash.debounce";
+import { router } from "@/pages/Router";
 
 export const Dashboard: FC = () => {
   useEffect(() => {
     useDashboard.getState().refetchUsers();
     fetchInbounds();
   }, []);
+
+  useEffect(() => {
+    setTimeout(function () {
+      const initFilters = debounce((params: URLSearchParams) => {
+        const filters: Partial<FilterType> = {};
+
+        filters.search = params.get("search") || undefined;
+        filters.status = (params.get("status") as FilterType["status"]) || undefined;
+        filters.sort = params.get("sort") || "-created_at";
+        filters.offset = params.get("offset") ? Number(params.get("offset")) : undefined;
+
+        useDashboard.getState().onFilterChange(filters, false);
+      }, 50);
+
+      initFilters(new URLSearchParams(router.state.location.search));
+      router.subscribe(
+        debounce((state) => {
+          if (state.historyAction === "POP") {
+            const params = new URLSearchParams(state.location.search);
+            initFilters(params);
+          }
+        }, 50),
+      );
+    }, 50);
+  });
   return (
     <VStack justifyContent="space-between" minH="100vh" p="6" rowGap={4}>
       <Box w="full">

@@ -231,27 +231,3 @@ export const useDashboard = create(
     },
   })),
 );
-
-setTimeout(function () {
-  const initFilters = debounce((params: URLSearchParams) => {
-    const filters: Partial<FilterType> = {};
-
-    filters.search = params.get("search") || undefined;
-    filters.status = (params.get("status") as FilterType["status"]) || undefined;
-    filters.sort = params.get("sort") || "-created_at";
-    filters.offset = params.get("offset") ? Number(params.get("offset")) : undefined;
-
-    console.log("setting filters", filters);
-    useDashboard.getState().onFilterChange(filters, false);
-  }, 50);
-
-  initFilters(new URLSearchParams(router.state.location.search));
-  router.subscribe(
-    debounce((state) => {
-      if (state.historyAction === "POP") {
-        const params = new URLSearchParams(state.location.search);
-        initFilters(params);
-      }
-    }, 50),
-  );
-}, 50);
