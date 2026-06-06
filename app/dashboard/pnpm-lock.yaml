@@ -24,8 +24,8 @@ importers:
         specifier: ^5.2.8
         version: 5.2.8
       '@gozargah/xray-schema':
-        specifier: ^0.0.7
-        version: 0.0.7
+        specifier: ^0.0.8
+        version: 0.0.8
       '@heroicons/react':
         specifier: ^2.0.12
         version: 2.2.0(react@19.2.7)
@@ -787,8 +787,8 @@ packages:
   '@fontsource-variable/inter@5.2.8':
     resolution: {integrity: sha512-kOfP2D+ykbcX/P3IFnokOhVRNoTozo5/JxhAIVYLpea/UBmCQ/YWPBfWIDuBImXX/15KH+eKh4xpEUyS2sQQGQ==}
 
-  '@gozargah/xray-schema@0.0.7':
-    resolution: {integrity: sha512-VF3Q2VzKC0VtHTdb8A1Mw7svlIKuFY5IEir+9UJEBVH47Ixvv85+fmseRh+wKlpzz9EfjNT7lL+FrViJq6Cs1g==}
+  '@gozargah/xray-schema@0.0.8':
+    resolution: {integrity: sha512-3u9mb0g1GNda3XxL2mDdxywIsp1dPIXbjsLtLTl4yPRfW2pJQVn6EOhRD74mBvRXLeG/wUJd/mYaJspDzqFXeA==}
 
   '@grpc/grpc-js@1.14.4':
     resolution: {integrity: sha512-k9Dj3DV/itK9D06Y8f190Qgop7/Ui+D0njFV3LHMPwPT75DpXLQohE9Wmz0QElrJnzsjB7KPWiKJbOl7IPDArQ==}
@@ -5658,7 +5658,7 @@ snapshots:
 
   '@fontsource-variable/inter@5.2.8': {}
 
-  '@gozargah/xray-schema@0.0.7':
+  '@gozargah/xray-schema@0.0.8':
     dependencies:
       zod: 4.4.3
 

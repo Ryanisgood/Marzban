@@ -15,7 +15,7 @@
     "@emotion/react": "^11.10.5",
     "@emotion/styled": "^11.10.5",
     "@fontsource-variable/inter": "^5.2.8",
-    "@gozargah/xray-schema": "^0.0.7",
+    "@gozargah/xray-schema": "^0.0.8",
     "@heroicons/react": "^2.0.12",
     "@hookform/resolvers": "^5.4.0",
     "@remix-run/router": "^1.23.3",
