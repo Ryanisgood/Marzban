@@ -40,6 +40,7 @@ const initEditor = async (json: object, colorMode: "light" | "dark") => {
       automaticLayout: true,
       quickSuggestions: { other: true, comments: false, strings: true },
       suggest: { showWords: false },
+      tabSize: 2,
     });
     setTimeout(() => {
       initHighlighter();
