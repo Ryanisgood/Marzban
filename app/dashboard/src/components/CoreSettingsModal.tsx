@@ -259,7 +259,7 @@ export const CoreSettingsModal: FC = () => {
       <DrawerContent
         id="core-settings-pane"
         onEscapeKeyDown={(e) => e.preventDefault()}
-        className="w-full max-w-3xl! dark:before:bg-[#2D3748] before:bg-[#FFF]"
+        className="w-full sm:max-w-3xl! dark:before:bg-[#2D3748] before:bg-[#FFF]"
       >
         <DrawerHeader className="relative w-full">
           <HStack gap={4}>
@@ -277,6 +277,7 @@ export const CoreSettingsModal: FC = () => {
               icon={<XIcon size="16" />}
               variant="ghost"
               className="absolute! right-3 top-4 w-fit"
+              onClick={handleOnClose}
             />
           </HStack>
         </DrawerHeader>
