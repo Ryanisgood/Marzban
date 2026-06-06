@@ -50,7 +50,15 @@ export const Dashboard: FC = () => {
     }, 50);
   });
   return (
-    <VStack justifyContent="space-between" minH="100vh" p="6" rowGap={4}>
+    <VStack
+      justifyContent="space-between"
+      minH="100vh"
+      p={{
+        base: "3",
+        lg: "6",
+      }}
+      rowGap={4}
+    >
       <Box w="full">
         <Header />
         <Statistics mt="4" />
