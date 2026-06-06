@@ -243,7 +243,14 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                 </HStack>
               </Th>
               <Th position="sticky" top={top} minW="50px" pl={0} pr={0} w="140px" cursor={"pointer"}>
-                <HStack spacing={0} position="relative" css={{ "& .chakra-select__wrapper": { width: "100%" } }}>
+                <HStack
+                  spacing={0}
+                  position="relative"
+                  css={{
+                    "& .chakra-select__wrapper": { width: "100%" },
+                    "& .chakra-select__icon-wrapper": { opacity: 0 },
+                  }}
+                >
                   <Text
                     position="absolute"
                     _dark={{
@@ -271,7 +278,6 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                     border={0}
                     h="full"
                     w="full"
-                    icon={<></>}
                     _focusVisible={{
                       border: "0 !important",
                     }}
@@ -424,7 +430,7 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
             </Th>
             <Th position="sticky" top={{ base: "unset", md: top }} width="400px" minW="150px" cursor={"pointer"}>
               <HStack position="relative" gap={"5px"} css={{ "& .chakra-select__wrapper": { height: "100%" } }}>
-                <Box className="relative">
+                <Box className="relative" css={{ "& .chakra-select__icon-wrapper": { opacity: 0 } }}>
                   <Text
                     _dark={{
                       bg: "gray.750",
@@ -452,7 +458,6 @@ export const UsersTable: FC<UsersTableProps> = (props) => {
                     w="full"
                     p={0}
                     border={0}
-                    icon={<></>}
                     _focusVisible={{
                       border: "0 !important",
                     }}
