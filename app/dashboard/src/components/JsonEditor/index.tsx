@@ -32,6 +32,7 @@ const initEditor = async (json: object, colorMode: "light" | "dark") => {
     editorInstance = monaco.editor.create(editorNode, {
       model,
       language: "json",
+      scrollBeyondLastLine: false,
       minimap: { enabled: false },
       padding: { top: 10, bottom: 10 },
       lineNumbersMinChars: 4.2,
@@ -43,7 +44,7 @@ const initEditor = async (json: object, colorMode: "light" | "dark") => {
     setTimeout(() => {
       initHighlighter();
       setTimeout(() => {
-        monaco.editor.setTheme(colorMode === "light" ? "one-light" : "one-dark-pro");
+        monaco.editor.setTheme(colorMode === "light" ? "min-light" : "one-dark-pro");
         resolve();
       }, 10);
     }, 10);
@@ -80,7 +81,7 @@ export const JsonEditor = forwardRef<HTMLDivElement, JSONEditorProps>(({ json, o
 
     if (editorInstance) {
       editorInstance.layout();
-      monaco.editor.setTheme(colorMode === "light" ? "one-light" : "one-dark-pro");
+      monaco.editor.setTheme(colorMode === "light" ? "min-light" : "one-dark-pro");
 
       editorInstance.focus();
 
@@ -115,7 +116,7 @@ export const JsonEditor = forwardRef<HTMLDivElement, JSONEditorProps>(({ json, o
   }, [json]);
 
   useEffect(() => {
-    monaco.editor.setTheme(colorMode === "light" ? "one-light" : "one-dark-pro");
+    monaco.editor.setTheme(colorMode === "light" ? "min-light" : "one-dark-pro");
   }, [colorMode]);
 
   return (
@@ -127,6 +128,28 @@ export const JsonEditor = forwardRef<HTMLDivElement, JSONEditorProps>(({ json, o
       flexDirection="column"
       overflow="hidden"
       css={{ "& > div": { height: "100% !important", flexGrow: 1 } }}
+      _light={{
+        "&  .lines-content.monaco-editor-background": {
+          bg: "#F9F9F9",
+        },
+        "& .margin-view-overlays": {
+          bg: "#f6f6f6",
+        },
+        ".monaco-editor .view-overlays .current-line": {
+          bg: "#f1f1f1 !important",
+        },
+      }}
+      _dark={{
+        "&  .lines-content.monaco-editor-background": {
+          bg: "#1D2127",
+        },
+        "& .margin-view-overlays": {
+          bg: "#1D2127",
+        },
+        ".monaco-editor .view-overlays .current-line": {
+          bg: "#2b2f37 !important",
+        },
+      }}
     />
   );
 });

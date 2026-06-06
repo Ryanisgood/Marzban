@@ -22,7 +22,7 @@ import { useTranslation } from "react-i18next";
 import { useMutation } from "react-query";
 import { Icon } from "./Icon";
 import { Drawer, DrawerContent, DrawerFooter, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
-import { Loader2Icon, PanelRightCloseIcon } from "lucide-react";
+import { Loader2Icon, PanelRightCloseIcon, XIcon } from "lucide-react";
 import { NodeLogs } from "@/components/NodeLogs";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +30,7 @@ const JsonEditor = lazy(() => import("./JsonEditor").then((mod) => ({ default: m
 
 const JsonEditorLoader = () => {
   return (
-    <div className="w-full h-full flex items-center justify-center dark:bg-[#282C34] bg-[#FAFAFA] rounded-sm">
+    <div className="w-full h-full flex items-center justify-center dark:bg-[#1D2127] bg-[#FAFAFA] rounded-sm">
       <Loader2Icon className="animate-spin" />
     </div>
   );
@@ -261,8 +261,8 @@ export const CoreSettingsModal: FC = () => {
         onEscapeKeyDown={(e) => e.preventDefault()}
         className="w-full max-w-3xl! dark:before:bg-[#2D3748] before:bg-[#FFF]"
       >
-        <DrawerHeader>
-          <HStack gap={2}>
+        <DrawerHeader className="relative w-full">
+          <HStack gap={4}>
             <Icon color="primary">
               <UsageIcon color="white" />
             </Icon>
@@ -271,6 +271,13 @@ export const CoreSettingsModal: FC = () => {
                 {t("core.title")}
               </Text>
             </DrawerTitle>
+            <IconButton
+              aria-label="Close core settings"
+              size="sm"
+              icon={<XIcon size="16" />}
+              variant="ghost"
+              className="absolute! right-3 top-4 w-fit"
+            />
           </HStack>
         </DrawerHeader>
         <CoreSettingModalContent />

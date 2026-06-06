@@ -44,12 +44,12 @@ const getWebsocketUrl = (nodeID: string) => {
 
 const LOG_LEVEL_COLORS: { [key: string]: CSSProperties["color"] } = {
   Info: "text-[#1d57c2] dark:text-[#5988e0]",
-  Warning: "text-[#c27a1d] dark:text-[#fbbf24]",
+  Warning: "text-[#b36908] dark:text-[#fbbf24]",
   Error: "text-[#c21d1d] dark:text-[#f87171]",
   Debug: "text-[#a78bf2] dark:text-[#a78bf2]",
 } as const;
 
-const LOG_RE = /^(\d{4}\/\d{2}\/\d{2} [\d:.]+) (\[(Info|Warning|Error|Debug)\]) (.*)$/;
+const LOG_RE = /^(\d{4}\/\d{2}\/\d{2} [\d:.]+)(?: (\[(Info|Warning|Error|Debug)\]))? (.*)$/;
 const Log: FC<{ children: string }> = ({ children }) => {
   const message = children.trim();
   const m = LOG_RE.exec(message);
@@ -63,8 +63,14 @@ const Log: FC<{ children: string }> = ({ children }) => {
 
   return (
     <Text fontSize="xs" opacity={0.8} whiteSpace="pre" fontFamily="monospace" style={{ height: `20px` }}>
-      <span className="dark:opacity-50 opacity-70">{timestamp}</span>{" "}
-      <span className={LOG_LEVEL_COLORS[levelKey]}>{level}</span> {rest}
+      <span className="dark:opacity-50 opacity-70">{timestamp}</span>
+      {level && (
+        <>
+          {" "}
+          <span className={LOG_LEVEL_COLORS[levelKey]}>{level}</span>
+        </>
+      )}{" "}
+      {rest}
     </Text>
   );
 };
