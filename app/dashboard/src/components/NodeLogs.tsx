@@ -190,7 +190,8 @@ export const NodeLogs = () => {
         flexGrow={1}
         key="logs"
         data-vaul-no-drag="true"
-        className="scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200/80 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-white/3"
+        onPointerDownCapture={(e) => e.nativeEvent.stopImmediatePropagation()}
+        className="select-text scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-200/80 dark:scrollbar-thumb-gray-600 dark:scrollbar-track-white/3"
         onScroll={handleScroll}
       >
         <div
