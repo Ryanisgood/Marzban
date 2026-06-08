@@ -31,11 +31,7 @@ import {
   useColorMode,
   useToast,
 } from "@chakra-ui/react";
-import {
-  ChartPieIcon,
-  PencilIcon,
-  UserPlusIcon,
-} from "@heroicons/react/24/outline";
+import { ChartPieIcon, PencilIcon, UserPlusIcon } from "@heroicons/react/24/outline";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { resetStrategy } from "constants/UserSettings";
 import { FilterUsageType, useDashboard } from "contexts/DashboardContext";
@@ -43,21 +39,9 @@ import dayjs from "dayjs";
 import { FC, useEffect, useState } from "react";
 import ReactApexChart from "react-apexcharts";
 import ReactDatePicker from "react-datepicker";
-import {
-  Controller,
-  FormProvider,
-  Resolver,
-  useForm,
-  useWatch,
-} from "react-hook-form";
+import { Controller, FormProvider, Resolver, useForm, useWatch } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import {
-  ProxyKeys,
-  ProxyType,
-  User,
-  UserCreate,
-  UserInbounds,
-} from "types/User";
+import { ProxyKeys, ProxyType, User, UserCreate, UserInbounds } from "types/User";
 import { relativeExpiryDate } from "utils/dateFormatter";
 import { z } from "zod";
 import { DeleteIcon } from "./DeleteUserModal";
@@ -98,9 +82,7 @@ export type FormType = Pick<UserCreate, keyof UserCreate> & {
 const formatUser = (user: User): FormType => {
   return {
     ...user,
-    data_limit: user.data_limit
-      ? Number((user.data_limit / 1073741824).toFixed(5))
-      : user.data_limit,
+    data_limit: user.data_limit ? Number((user.data_limit / 1073741824).toFixed(5)) : user.data_limit,
     on_hold_expire_duration: user.on_hold_expire_duration
       ? Number(user.on_hold_expire_duration / (24 * 60 * 60))
       : user.on_hold_expire_duration,
@@ -132,14 +114,8 @@ const getDefaultValues = (): FormType => {
   };
 };
 
-const mergeProxies = (
-  proxyKeys: ProxyKeys,
-  proxyType: ProxyType | undefined,
-): ProxyType => {
-  const proxies: ProxyType = proxyKeys.reduce(
-    (ac, a) => ({ ...ac, [a]: {} }),
-    {},
-  );
+const mergeProxies = (proxyKeys: ProxyKeys, proxyType: ProxyType | undefined): ProxyType => {
+  const proxies: ProxyType = proxyKeys.reduce((ac, a) => ({ ...ac, [a]: {} }), {});
   if (!proxyType) return proxies;
   proxyKeys.forEach((proxy) => {
     if (proxyType[proxy]) {
@@ -155,21 +131,19 @@ const baseSchema = {
     message: "userDialog.selectOneProtocol",
   }),
   note: z.string().nullable(),
-  proxies: z
-    .record(z.string(), z.record(z.string(), z.any()))
-    .transform((ins) => {
-      const deleteIfEmpty = (obj: any, key: string) => {
-        if (obj && obj[key] === "") {
-          delete obj[key];
-        }
-      };
-      deleteIfEmpty(ins.vmess, "id");
-      deleteIfEmpty(ins.vless, "id");
-      deleteIfEmpty(ins.trojan, "password");
-      deleteIfEmpty(ins.shadowsocks, "password");
-      deleteIfEmpty(ins.shadowsocks, "method");
-      return ins;
-    }),
+  proxies: z.record(z.string(), z.record(z.string(), z.any())).transform((ins) => {
+    const deleteIfEmpty = (obj: any, key: string) => {
+      if (obj && obj[key] === "") {
+        delete obj[key];
+      }
+    };
+    deleteIfEmpty(ins.vmess, "id");
+    deleteIfEmpty(ins.vless, "id");
+    deleteIfEmpty(ins.trojan, "password");
+    deleteIfEmpty(ins.shadowsocks, "password");
+    deleteIfEmpty(ins.shadowsocks, "method");
+    return ins;
+  }),
   data_limit: z
     .string()
     .min(0)
@@ -183,8 +157,7 @@ const baseSchema = {
   data_limit_reset_strategy: z.string(),
   inbounds: z.record(z.string(), z.array(z.string())).transform((ins) => {
     Object.keys(ins).forEach((protocol) => {
-      if (Array.isArray(ins[protocol]) && !ins[protocol]?.length)
-        delete ins[protocol];
+      if (Array.isArray(ins[protocol]) && !ins[protocol]?.length) delete ins[protocol];
     });
     return ins;
   }),
@@ -303,13 +276,9 @@ export const UserDialog: FC<UserDialogProps> = () => {
       data_limit: values.data_limit,
       proxies: mergeProxies(selected_proxies, values.proxies),
       data_limit_reset_strategy:
-        values.data_limit && values.data_limit > 0
-          ? values.data_limit_reset_strategy
-          : "no_reset",
+        values.data_limit && values.data_limit > 0 ? values.data_limit_reset_strategy : "no_reset",
       status:
-        values.status === "active" ||
-        values.status === "disabled" ||
-        values.status === "on_hold"
+        values.status === "active" || values.status === "disabled" || values.status === "on_hold"
           ? values.status
           : "active",
     };
@@ -317,10 +286,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
     methods[method](body)
       .then(() => {
         toast({
-          title: t(
-            isEditing ? "userDialog.userEdited" : "userDialog.userCreated",
-            { username: values.username },
-          ),
+          title: t(isEditing ? "userDialog.userEdited" : "userDialog.userCreated", { username: values.username }),
           status: "success",
           isClosable: true,
           position: "top",
@@ -329,18 +295,14 @@ export const UserDialog: FC<UserDialogProps> = () => {
         onClose();
       })
       .catch((err) => {
-        if (err?.response?.status === 409 || err?.response?.status === 400)
-          setError(err?.response?._data?.detail);
+        if (err?.response?.status === 409 || err?.response?.status === 400) setError(err?.response?._data?.detail);
         if (err?.response?.status === 422) {
           Object.keys(err.response._data.detail).forEach((key) => {
             setError(err?.response._data.detail[key] as string);
-            form.setError(
-              key as "proxies" | "username" | "data_limit" | "expire",
-              {
-                type: "custom",
-                message: err.response._data.detail[key],
-              },
-            );
+            form.setError(key as "proxies" | "username" | "data_limit" | "expire", {
+              type: "custom",
+              message: err.response._data.detail[key],
+            });
           });
         }
       })
@@ -374,8 +336,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
   const createRandomUsername = (): string => {
     setrandomUsernameLoading(true);
     let result = "";
-    const characters =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     const charactersLength = characters.length;
     let counter = 0;
     while (counter < 6) {
@@ -394,16 +355,10 @@ export const UserDialog: FC<UserDialogProps> = () => {
             <ModalHeader pt={6}>
               <HStack gap={2}>
                 <Icon color="primary">
-                  {isEditing ? (
-                    <EditUserIcon color="white" />
-                  ) : (
-                    <AddUserIcon color="white" />
-                  )}
+                  {isEditing ? <EditUserIcon color="white" /> : <AddUserIcon color="white" />}
                 </Icon>
                 <Text fontWeight="semibold" fontSize="lg">
-                  {isEditing
-                    ? t("userDialog.editUserTitle")
-                    : t("createNewUser")}
+                  {isEditing ? t("userDialog.editUserTitle") : t("createNewUser")}
                 </Text>
               </HStack>
             </ModalHeader>
@@ -418,11 +373,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
               >
                 <GridItem>
                   <VStack justifyContent="space-between">
-                    <Flex
-                      flexDirection="column"
-                      gridAutoRows="min-content"
-                      w="full"
-                    >
+                    <Flex flexDirection="column" gridAutoRows="min-content" w="full">
                       <Flex flexDirection="row" w="full" gap={2}>
                         <FormControl mb={"10px"}>
                           <FormLabel>
@@ -435,8 +386,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                     "animate-spin": randomUsernameLoading,
                                   })}
                                   onClick={() => {
-                                    const randomUsername =
-                                      createRandomUsername();
+                                    const randomUsername = createRandomUsername();
                                     form.setValue("username", randomUsername);
                                     setTimeout(() => {
                                       setrandomUsernameLoading(false);
@@ -464,10 +414,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                     return (
                                       <Tooltip
                                         placement="top"
-                                        label={
-                                          "status: " +
-                                          t(`status.${field.value}`)
-                                        }
+                                        label={"status: " + t(`status.${field.value}`)}
                                         textTransform="capitalize"
                                       >
                                         <Box>
@@ -493,9 +440,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
                         </FormControl>
                         {!isEditing && (
                           <FormControl flex="1">
-                            <FormLabel whiteSpace={"nowrap"}>
-                              {t("userDialog.onHold")}
-                            </FormLabel>
+                            <FormLabel whiteSpace={"nowrap"}>{t("userDialog.onHold")}</FormLabel>
                             <Controller
                               name="status"
                               control={form.control}
@@ -539,24 +484,17 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                 borderRadius="6px"
                                 onChange={field.onChange}
                                 disabled={disabled}
-                                error={
-                                  form.formState.errors.data_limit?.message
-                                }
+                                error={form.formState.errors.data_limit?.message}
                                 value={field.value ? String(field.value) : ""}
                               />
                             );
                           }}
                         />
                       </FormControl>
-                      <Collapse
-                        in={!!(dataLimit && dataLimit > 0)}
-                        animateOpacity
-                        style={{ width: "100%" }}
-                      >
+                      {/* @ts-expect-error this is not fully typed, must be upgraded to the latest version maybe */}
+                      <Collapse in={!!(dataLimit && dataLimit > 0)} animateOpacity style={{ width: "100%" }}>
                         <FormControl height="66px">
-                          <FormLabel>
-                            {t("userDialog.periodicUsageReset")}
-                          </FormLabel>
+                          <FormLabel>{t("userDialog.periodicUsageReset")}</FormLabel>
                           <Controller
                             control={form.control}
                             name="data_limit_reset_strategy"
@@ -572,19 +510,14 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                   }}
                                   sx={{
                                     option: {
-                                      backgroundColor:
-                                        colorMode === "dark"
-                                          ? "#222C3B"
-                                          : "white",
+                                      backgroundColor: colorMode === "dark" ? "#222C3B" : "white",
                                     },
                                   }}
                                 >
                                   {resetStrategy.map((s) => {
                                     return (
                                       <option key={s.value} value={s.value}>
-                                        {t(
-                                          "userDialog.resetStrategy" + s.title,
-                                        )}
+                                        {t("userDialog.resetStrategy" + s.title)}
                                       </option>
                                     );
                                   })}
@@ -597,9 +530,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
 
                       <FormControl mb={"10px"}>
                         <FormLabel>
-                          {isOnHold
-                            ? t("userDialog.onHoldExpireDuration")
-                            : t("userDialog.expiryDate")}
+                          {isOnHold ? t("userDialog.onHoldExpireDuration") : t("userDialog.expiryDate")}
                         </FormLabel>
 
                         {isOnHold && (
@@ -622,10 +553,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                     });
                                   }}
                                   disabled={disabled}
-                                  error={
-                                    form.formState.errors
-                                      .on_hold_expire_duration?.message
-                                  }
+                                  error={form.formState.errors.on_hold_expire_duration?.message}
                                   value={field.value ? String(field.value) : ""}
                                 />
                               );
@@ -643,34 +571,20 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                   // .format("MMMM D, YYYY") // exception with: dayjs.locale(lng);
                                 ).toDate();
                               }
-                              const { status, time } = relativeExpiryDate(
-                                field.value,
-                              );
+                              const { status, time } = relativeExpiryDate(field.value);
                               return (
                                 <>
                                   <ReactDatePicker
                                     locale={i18n.language.toLocaleLowerCase()}
                                     dateFormat={t("dateFormat")}
                                     minDate={new Date()}
-                                    selected={
-                                      field.value
-                                        ? createDateAsUTC(field.value)
-                                        : undefined
-                                    }
+                                    selected={field.value ? createDateAsUTC(field.value) : undefined}
                                     onChange={(date: Date) => {
-                                      form.setValue(
-                                        "on_hold_expire_duration",
-                                        null,
-                                      );
+                                      form.setValue("on_hold_expire_duration", null);
                                       field.onChange({
                                         target: {
                                           value: date
-                                            ? dayjs(
-                                                dayjs(date)
-                                                  .set("hour", 23)
-                                                  .set("minute", 59)
-                                                  .set("second", 59),
-                                              )
+                                            ? dayjs(dayjs(date).set("hour", 23).set("minute", 59).set("second", 59))
                                                 .utc()
                                                 .valueOf() / 1000
                                             : 0,
@@ -685,19 +599,11 @@ export const UserDialog: FC<UserDialogProps> = () => {
                                         borderRadius="6px"
                                         clearable
                                         disabled={disabled}
-                                        error={
-                                          form.formState.errors.expire?.message
-                                        }
+                                        error={form.formState.errors.expire?.message}
                                       />
                                     }
                                   />
-                                  {field.value ? (
-                                    <FormHelperText>
-                                      {t(status, { time: time })}
-                                    </FormHelperText>
-                                  ) : (
-                                    ""
-                                  )}
+                                  {field.value ? <FormHelperText>{t(status, { time: time })}</FormHelperText> : ""}
                                 </>
                               );
                             }}
@@ -705,22 +611,14 @@ export const UserDialog: FC<UserDialogProps> = () => {
                         )}
                       </FormControl>
 
-                      <FormControl
-                        mb={"10px"}
-                        isInvalid={!!form.formState.errors.note}
-                      >
+                      <FormControl mb={"10px"} isInvalid={!!form.formState.errors.note}>
                         <FormLabel>{t("userDialog.note")}</FormLabel>
                         <Textarea {...form.register("note")} />
-                        <FormErrorMessage>
-                          {form.formState.errors?.note?.message}
-                        </FormErrorMessage>
+                        <FormErrorMessage>{form.formState.errors?.note?.message}</FormErrorMessage>
                       </FormControl>
                     </Flex>
                     {error && (
-                      <Alert
-                        status="error"
-                        display={{ base: "none", md: "flex" }}
-                      >
+                      <Alert status="error" display={{ base: "none", md: "flex" }}>
                         <AlertIcon />
                         {error}
                       </Alert>
@@ -728,11 +626,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
                   </VStack>
                 </GridItem>
                 <GridItem>
-                  <FormControl
-                    isInvalid={
-                      !!form.formState.errors.selected_proxies?.message
-                    }
-                  >
+                  <FormControl isInvalid={!!form.formState.errors.selected_proxies?.message}>
                     <FormLabel>{t("userDialog.protocols")}</FormLabel>
                     <Controller
                       control={form.control}
@@ -764,12 +658,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
                         );
                       }}
                     />
-                    <FormErrorMessage>
-                      {t(
-                        form.formState.errors.selected_proxies
-                          ?.message as string,
-                      )}
-                    </FormErrorMessage>
+                    <FormErrorMessage>{t(form.formState.errors.selected_proxies?.message as string)}</FormErrorMessage>
                   </FormControl>
                 </GridItem>
                 {isEditing && usageVisible && (
@@ -782,26 +671,15 @@ export const UserDialog: FC<UserDialogProps> = () => {
                           fetchUsageWithFilter(query);
                         }}
                       />
-                      <Box
-                        width={{ base: "100%", md: "70%" }}
-                        justifySelf="center"
-                      >
-                        <ReactApexChart
-                          options={usage.options}
-                          series={usage.series}
-                          type="donut"
-                        />
+                      <Box width={{ base: "100%", md: "70%" }} justifySelf="center">
+                        <ReactApexChart options={usage.options} series={usage.series} type="donut" />
                       </Box>
                     </VStack>
                   </GridItem>
                 )}
               </Grid>
               {error && (
-                <Alert
-                  mt="3"
-                  status="error"
-                  display={{ base: "flex", md: "none" }}
-                >
+                <Alert mt="3" status="error" display={{ base: "flex", md: "none" }}>
                   <AlertIcon />
                   {error}
                 </Alert>
@@ -839,11 +717,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
                         </IconButton>
                       </Tooltip>
                       <Tooltip label={t("userDialog.usage")} placement="top">
-                        <IconButton
-                          aria-label="usage"
-                          size="sm"
-                          onClick={handleUsageToggle}
-                        >
+                        <IconButton aria-label="usage" size="sm" onClick={handleUsageToggle}>
                           <UserUsageIcon />
                         </IconButton>
                       </Tooltip>
@@ -856,11 +730,7 @@ export const UserDialog: FC<UserDialogProps> = () => {
                     </>
                   )}
                 </HStack>
-                <HStack
-                  w="full"
-                  maxW={{ md: "50%", base: "full" }}
-                  justify="end"
-                >
+                <HStack w="full" maxW={{ md: "50%", base: "full" }} justify="end">
                   <Button
                     type="submit"
                     size="sm"

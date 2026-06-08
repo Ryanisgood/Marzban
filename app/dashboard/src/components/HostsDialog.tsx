@@ -245,6 +245,7 @@ const AccordionInbound: FC<AccordionInboundType> = ({ hostKey, isOpen, toggleAcc
         <VStack gap={3}>
           {hosts.map((host, index) => {
             return (
+              // @ts-expect-error this is not fully typed, must be upgraded to the latest version maybe
               <motion.div
                 key={host.id}
                 layout

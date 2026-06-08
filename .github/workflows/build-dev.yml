@@ -3,27 +3,33 @@ name: Build-dev
 on:
   push:
     branches:
-      - 'dev'
+      - "dev"
 
 jobs:
   build-dev:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
       - name: Setup nodejs
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v6
         with:
-          node-version: 16.17.0
+          node-version: "24"
+          cache: "pnpm"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Enable corepack
+        run: corepack enable
 
       - name: Install dependencies
         working-directory: ./app/dashboard
-        run: npm ci
+        run: pnpm i
 
       - name: Build project
         working-directory: ./app/dashboard
-        run: VITE_BASE_API=/api/ npm run build --if-present -- --outDir build --assetsDir statics
+        run: VITE_BASE_API=/api/ pnpm run build --if-present -- --outDir build --assetsDir statics
 
       - name: Create 404.html
         working-directory: ./app/dashboard
