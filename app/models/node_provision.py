@@ -3,6 +3,8 @@ from typing import List
 
 from pydantic import BaseModel, Field
 
+from app.models.node import NodeResponse
+
 
 class NodeProvisionProtocol(str, Enum):
     hy2 = "hy2"
@@ -22,3 +24,11 @@ class NodeProvisionCreate(BaseModel):
     api_port: int = Field(default=62051, ge=1, le=65535)
     usage_coefficient: float = Field(default=1.0, gt=0)
     inbounds: List[NodeProvisionInbound]
+
+
+class NodeProvisionResponse(BaseModel):
+    node: NodeResponse
+    active_inbounds: List[str]
+    core_kind: str
+    install_token: str
+    install_command: str

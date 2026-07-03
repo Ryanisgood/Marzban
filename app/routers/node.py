@@ -2,7 +2,7 @@ import asyncio
 import time
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, WebSocket
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, WebSocket
 from sqlalchemy.exc import IntegrityError
 from starlette.websockets import WebSocketDisconnect
 
@@ -19,8 +19,10 @@ from app.models.node import (
     NodeStatus,
     NodesUsageResponse,
 )
+from app.models.node_provision import NodeProvisionCreate, NodeProvisionResponse
 from app.models.proxy import ProxyHost
 from app.utils import responses
+from app.xray.node_provisioning import apply_provisioned_config, provision_node
 from app.xray.node_status import build_node_runtime_status, get_inbound_user_counts
 
 router = APIRouter(
@@ -258,6 +260,48 @@ def add_node(
 
     logger.info(f'New node "{dbnode.name}" added')
     return node_response(dbnode)
+
+
+@router.post(
+    "/node/provision",
+    response_model=NodeProvisionResponse,
+    responses={409: responses._409},
+)
+def provision_new_node(
+    payload: NodeProvisionCreate,
+    request: Request,
+    bg: BackgroundTasks,
+    db: Session = Depends(get_db),
+    admin: Admin = Depends(Admin.check_sudo_admin),
+):
+    """Provision a panel-managed node with generated inbounds and an install command."""
+    try:
+        result = provision_node(
+            db,
+            payload,
+            admin_username=admin.username,
+            controller_url=str(request.base_url).rstrip("/"),
+            current_config=xray.config.copy(),
+            apply_config=apply_provisioned_config,
+        )
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail=f'Node "{payload.name}" already exists'
+        )
+    except ValueError as err:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(err))
+
+    bg.add_task(xray.operations.connect_node, node_id=result.node.id)
+    logger.info(f'Provisioned node "{result.node.name}"')
+    return NodeProvisionResponse(
+        node=node_response(result.node),
+        active_inbounds=result.active_inbounds,
+        core_kind=result.core_kind,
+        install_token=result.install_token,
+        install_command=result.install_command,
+    )
 
 
 @router.get("/node/{node_id}", response_model=NodeResponse)

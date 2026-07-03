@@ -8,7 +8,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
 from app.db.models import Node as DBNode
+from app.db.models import ProxyHost
 from app.db.crud import create_node_provision_token, redeem_node_provision_token
+from app.models.node import NodeInboundsMode
+from app.models.node_provision import NodeProvisionCreate, NodeProvisionInbound
 from app.models.node_provision import NodeProvisionProtocol
 from app.xray.config import XRayConfig
 from app.xray.node_provisioning import (
@@ -16,6 +19,8 @@ from app.xray.node_provisioning import (
     choose_core_kind,
     hash_install_token,
     verify_install_token,
+    provision_node,
+    apply_provisioned_config,
 )
 
 
@@ -153,3 +158,115 @@ def test_redeem_node_provision_token_rejects_expired_token():
     )
 
     assert redeem_node_provision_token(db, token) is None
+
+
+def test_provision_node_creates_config_hosts_panel_node_and_install_command():
+    db = _db_session()
+    applied_configs = []
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.hy2, port=8443),
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.vless_reality, port=443),
+        ],
+    )
+    current_config = {
+        "log": {"loglevel": "warning"},
+        "inbounds": [
+            {
+                "tag": "existing-ss",
+                "listen": "0.0.0.0",
+                "port": 1080,
+                "protocol": "shadowsocks",
+                "settings": {"clients": [], "network": "tcp"},
+            }
+        ],
+        "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+    }
+
+    result = provision_node(
+        db,
+        payload,
+        admin_username="admin",
+        controller_url="https://panel.example.com",
+        current_config=current_config,
+        apply_config=applied_configs.append,
+    )
+
+    assert result.node.name == "rn1c1g"
+    assert result.node.inbounds_mode == NodeInboundsMode.panel
+    assert result.node.active_inbounds == ["node-1-hy2-8443", "node-1-vless-443"]
+    assert result.core_kind == "sing-box"
+    assert result.install_command.startswith(
+        "curl -fsSL https://panel.example.com/api/node/install.sh | sudo bash -s -- --token "
+    )
+    assert result.install_token
+    assert result.install_token in result.install_command
+
+    assert len(applied_configs) == 1
+    applied = XRayConfig(applied_configs[0])
+    assert "existing-ss" in applied.inbounds_by_tag
+    assert "node-1-hy2-8443" in applied.inbounds_by_tag
+    assert "node-1-vless-443" in applied.inbounds_by_tag
+
+    hosts = db.query(ProxyHost).order_by(ProxyHost.inbound_tag).all()
+    assert [host.inbound_tag for host in hosts] == [
+        "node-1-hy2-8443",
+        "node-1-vless-443",
+    ]
+    assert all(host.address == "node.example.com" for host in hosts)
+    assert [host.port for host in hosts] == [8443, 443]
+
+
+def test_apply_provisioned_config_uses_core_config_lifecycle(monkeypatch, tmp_path):
+    from app import xray
+    import app.xray.node_provisioning as provisioning
+
+    config_path = tmp_path / "xray.json"
+    restarts = []
+    node_restarts = []
+    host_updates = []
+    candidate_config = {
+        "inbounds": [
+            {
+                "tag": "node-1-hy2-8443",
+                "listen": "0.0.0.0",
+                "port": 8443,
+                "protocol": "hysteria",
+                "settings": {"version": 2, "users": []},
+                "streamSettings": {"network": "hysteria"},
+            }
+        ],
+        "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+    }
+
+    class Core:
+        def restart(self, startup_config):
+            restarts.append(startup_config)
+
+    class Hosts:
+        def update(self):
+            host_updates.append(True)
+
+    class Node:
+        connected = True
+
+    monkeypatch.setattr(provisioning, "XRAY_JSON", str(config_path))
+    monkeypatch.setattr(xray, "core", Core())
+    monkeypatch.setattr(xray, "hosts", Hosts())
+    monkeypatch.setattr(xray, "nodes", {7: Node()})
+    monkeypatch.setattr(provisioning.XRayConfig, "include_db_users", lambda self: self)
+    monkeypatch.setattr(
+        provisioning.xray.operations,
+        "restart_node",
+        lambda node_id, startup_config: node_restarts.append((node_id, startup_config)),
+    )
+
+    apply_provisioned_config(candidate_config)
+
+    assert config_path.exists()
+    assert restarts
+    assert node_restarts[0][0] == 7
+    assert host_updates == [True]
+    assert xray.config.inbounds_by_tag["node-1-hy2-8443"]["protocol"] == "hysteria"
