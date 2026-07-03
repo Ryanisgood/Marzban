@@ -73,6 +73,14 @@ def build_node_runtime_status(
     inbound_user_counts = inbound_user_counts or {}
     actual_core = _normalize_core_kind(getattr(runtime_node, "core_kind", None))
     xray_api_available = getattr(runtime_node, "xray_api_available", None)
+    diagnostics = {
+        "node_version": getattr(runtime_node, "node_version", None),
+        "installed_cores": getattr(runtime_node, "installed_cores", None) or {},
+        "memory": getattr(runtime_node, "memory", None) or {},
+        "local_listening_ports": getattr(runtime_node, "local_listening_ports", None) or [],
+        "configured_inbound_ports": getattr(runtime_node, "configured_inbound_ports", None) or [],
+        "last_core_restart_at": getattr(runtime_node, "last_core_restart_at", None),
+    }
 
     if dbnode.inbounds_mode != NodeInboundsMode.panel:
         return NodeRuntimeStatus(
@@ -80,6 +88,7 @@ def build_node_runtime_status(
             core_reason="Legacy INBOUNDS mode; controller does not own this node's inbound selection",
             xray_api_available=xray_api_available,
             restart_required=False,
+            **diagnostics,
         )
 
     active_tags = list(getattr(dbnode, "active_inbounds", []) or [])
@@ -141,6 +150,7 @@ def build_node_runtime_status(
         core_reason=reason,
         xray_api_available=xray_api_available,
         restart_required=restart_required,
+        **diagnostics,
     )
 
 

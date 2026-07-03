@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import ConfigDict, BaseModel, Field
 
@@ -88,6 +88,12 @@ class NodeRuntimeStatus(BaseModel):
     core_reason: str
     xray_api_available: Optional[bool] = None
     restart_required: bool = False
+    node_version: Optional[str] = None
+    installed_cores: Dict[str, Any] = Field(default_factory=dict)
+    memory: Dict[str, Any] = Field(default_factory=dict)
+    local_listening_ports: List[Dict[str, Any]] = Field(default_factory=list)
+    configured_inbound_ports: List[Dict[str, Any]] = Field(default_factory=list)
+    last_core_restart_at: Optional[int] = None
 
 
 class NodeResponse(Node):

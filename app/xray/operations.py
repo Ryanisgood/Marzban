@@ -60,6 +60,17 @@ def _node_apis_for_inbound(nodes, inbound_tag: str):
             yield api
 
 
+def _hysteria_inbound_tags_from_user(dbuser: "DBUser") -> set[str]:
+    try:
+        user = UserResponse.model_validate(dbuser)
+        return set(user.inbounds.get(ProxyTypes.Hysteria, []))
+    except Exception:
+        return {
+            inbound["tag"]
+            for inbound in xray.config.inbounds_by_protocol.get(ProxyTypes.Hysteria, [])
+        }
+
+
 @threaded_function
 def _add_user_to_inbound(api: XRayAPI, inbound_tag: str, account: Account):
     try:
@@ -91,11 +102,11 @@ def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
 def add_user(dbuser: "DBUser"):
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
-    needs_config_reload = False
+    config_reload_inbounds = set()
 
     for proxy_type, inbound_tags in user.inbounds.items():
         if proxy_type == ProxyTypes.Hysteria:
-            needs_config_reload = True
+            config_reload_inbounds.update(inbound_tags)
         for inbound_tag in inbound_tags:
             inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
 
@@ -123,27 +134,42 @@ def add_user(dbuser: "DBUser"):
             for node_api in _node_apis_for_inbound(xray.nodes.values(), inbound_tag):
                 _add_user_to_inbound(node_api, inbound_tag, account)
 
-    if needs_config_reload:
-        _restart_started_nodes_for_config_reload()
+    if config_reload_inbounds:
+        _restart_started_nodes_for_config_reload(config_reload_inbounds)
 
 
-def remove_user(dbuser: "DBUser"):
+def remove_user(dbuser: "DBUser", config_reload_inbounds=None):
     email = f"{dbuser.id}.{dbuser.username}"
-    needs_config_reload = any(proxy.type == ProxyTypes.Hysteria for proxy in dbuser.proxies)
+    if config_reload_inbounds is None:
+        config_reload_inbounds = (
+            _hysteria_inbound_tags_from_user(dbuser)
+            if any(proxy.type == ProxyTypes.Hysteria for proxy in dbuser.proxies)
+            else set()
+        )
+    else:
+        config_reload_inbounds = set(config_reload_inbounds)
 
     for inbound_tag in xray.config.inbounds_by_tag:
         _remove_user_from_inbound(xray.api, inbound_tag, email)
         for node_api in _node_apis_for_inbound(xray.nodes.values(), inbound_tag):
             _remove_user_from_inbound(node_api, inbound_tag, email)
 
-    if needs_config_reload:
-        _restart_started_nodes_for_config_reload()
+    if config_reload_inbounds:
+        _restart_started_nodes_for_config_reload(config_reload_inbounds)
 
 
-def update_user(dbuser: "DBUser"):
+def update_user(dbuser: "DBUser", config_reload_inbounds=None):
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
-    needs_config_reload = bool(xray.config.inbounds_by_protocol.get(ProxyTypes.Hysteria))
+    if config_reload_inbounds is None:
+        config_reload_inbounds = set(user.inbounds.get(ProxyTypes.Hysteria, []))
+        if not config_reload_inbounds and xray.config.inbounds_by_protocol.get(ProxyTypes.Hysteria):
+            config_reload_inbounds = {
+                inbound["tag"]
+                for inbound in xray.config.inbounds_by_protocol.get(ProxyTypes.Hysteria, [])
+            }
+    else:
+        config_reload_inbounds = set(config_reload_inbounds)
 
     active_inbounds = []
     for proxy_type, inbound_tags in user.inbounds.items():
@@ -183,14 +209,18 @@ def update_user(dbuser: "DBUser"):
         for node_api in _node_apis_for_inbound(xray.nodes.values(), inbound_tag):
             _remove_user_from_inbound(node_api, inbound_tag, email)
 
-    if needs_config_reload:
-        _restart_started_nodes_for_config_reload()
+    if config_reload_inbounds:
+        _restart_started_nodes_for_config_reload(config_reload_inbounds)
 
 
-def _restart_started_nodes_for_config_reload():
+def _restart_started_nodes_for_config_reload(inbound_tags=None):
+    inbound_tags = set(inbound_tags or [])
     for node_id, node in list(xray.nodes.items()):
-        if node.connected and node.started:
-            restart_node(node_id)
+        if not node.connected or not node.started:
+            continue
+        if inbound_tags and not any(_node_runs_inbound(node, tag) for tag in inbound_tags):
+            continue
+        restart_node(node_id)
 
 
 def remove_node(node_id: int):

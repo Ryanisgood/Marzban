@@ -14,6 +14,7 @@ from app.db.models import Node as DBNode, Proxy, ProxyInbound, User as DBUser
 from app.models.node import NodeInboundsMode
 from app.models.proxy import ProxyTypes
 from app.models.user import UserDataLimitResetStrategy, UserStatus
+from app.routers.node import validate_inbounds_selection
 from app.xray import operations
 from app.xray.config import XRayConfig
 from app.xray.node_status import build_node_runtime_status
@@ -33,6 +34,51 @@ def _config():
                     "streamSettings": {"network": "hysteria"},
                 },
                 {"tag": "VLESS", "protocol": "vless", "port": 443},
+            ],
+            "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
+        }
+    )
+
+
+def _same_tcp_port_config():
+    return XRayConfig(
+        {
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                {"tag": "VLESS", "protocol": "vless", "port": 443},
+                {"tag": "VMESS", "protocol": "vmess", "port": 443},
+            ],
+            "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
+        }
+    )
+
+
+def _hy2_vmess_config():
+    return XRayConfig(
+        {
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                {
+                    "tag": "HY2",
+                    "protocol": "hysteria",
+                    "port": 8443,
+                    "settings": {"version": 2, "users": []},
+                    "streamSettings": {"network": "hysteria"},
+                },
+                {"tag": "VMESS", "protocol": "vmess", "port": 443},
+            ],
+            "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
+        }
+    )
+
+
+def _wildcard_tcp_port_config():
+    return XRayConfig(
+        {
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                {"tag": "PUBLIC", "listen": "0.0.0.0", "protocol": "vless", "port": 443},
+                {"tag": "LOCAL", "listen": "127.0.0.1", "protocol": "vmess", "port": 443},
             ],
             "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
         }
@@ -69,6 +115,39 @@ def test_rest_node_sends_active_inbounds_to_rust_node(monkeypatch):
     assert captured["inbounds"] == ["VLESS"]
     assert '"tag": "VLESS"' in captured["config"]
     assert '"tag": "HY2"' not in captured["config"]
+
+
+def test_rest_node_caches_runtime_diagnostics_from_rust_node(monkeypatch):
+    node = ReSTXRayNode.__new__(ReSTXRayNode)
+    node.active_inbounds = ["HY2"]
+    node._session_id = "session-id"
+
+    response = {
+        "xray_api": False,
+        "features": ["controller_inbounds", "core_kind", "node_diagnostics"],
+        "core_kind": "sing-box",
+        "node_version": "0.1.0",
+        "installed_cores": {
+            "xray": {"installed": True, "version": "26.6.27", "path": "/usr/local/bin/xray"},
+            "sing-box": {"installed": True, "version": "1.13.0", "path": "/usr/local/bin/sing-box"},
+        },
+        "memory": {"agent_rss_bytes": 1024, "core_rss_bytes": 2048},
+        "local_listening_ports": [{"transport": "udp", "port": 8443}],
+        "configured_inbound_ports": [{"tag": "HY2", "transport": "udp", "port": 8443}],
+        "last_core_restart_at": 1783030000,
+    }
+
+    monkeypatch.setattr(node, "make_request", lambda *args, **kwargs: response)
+    monkeypatch.setattr(node, "_configure_xray_api", lambda response: node._update_runtime_state(response))
+
+    node.restart(_config())
+
+    assert node.node_version == "0.1.0"
+    assert node.installed_cores["sing-box"]["version"] == "1.13.0"
+    assert node.memory["core_rss_bytes"] == 2048
+    assert node.local_listening_ports == [{"transport": "udp", "port": 8443}]
+    assert node.configured_inbound_ports == [{"tag": "HY2", "transport": "udp", "port": 8443}]
+    assert node.last_core_restart_at == 1783030000
 
 
 def test_rest_node_rejects_panel_mode_when_node_lacks_controller_inbounds_feature(monkeypatch):
@@ -145,6 +224,12 @@ def test_node_runtime_status_describes_sing_box_strategy(monkeypatch):
         last_started_inbounds=["VLESS"],
         core_kind="xray",
         xray_api_available=False,
+        node_version="0.1.0",
+        installed_cores={"sing-box": {"installed": True, "version": "1.13.0"}},
+        memory={"agent_rss_bytes": 1024, "core_rss_bytes": 2048},
+        local_listening_ports=[{"transport": "udp", "port": 9443}],
+        configured_inbound_ports=[{"tag": "HY2", "transport": "udp", "port": 8443}],
+        last_core_restart_at=1783030000,
     )
 
     status = build_node_runtime_status(
@@ -162,6 +247,12 @@ def test_node_runtime_status_describes_sing_box_strategy(monkeypatch):
     assert status.active_inbounds_details[0].port == 8443
     assert status.active_inbounds_details[0].public_port == 9443
     assert status.active_inbounds_details[0].users_count == 10
+    assert status.node_version == "0.1.0"
+    assert status.installed_cores["sing-box"]["version"] == "1.13.0"
+    assert status.memory["core_rss_bytes"] == 2048
+    assert status.local_listening_ports[0]["port"] == 9443
+    assert status.configured_inbound_ports[0]["tag"] == "HY2"
+    assert status.last_core_restart_at == 1783030000
 
 
 def test_node_runtime_status_describes_xray_strategy(monkeypatch):
@@ -277,6 +368,114 @@ def test_node_runtime_status_marks_legacy_mode_unknown(monkeypatch):
     assert status.active_inbounds_details == []
 
 
+def test_node_inbounds_validation_rejects_missing_host(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(operations.xray, "hosts", {})
+
+    with pytest.raises(Exception) as exc_info:
+        validate_inbounds_selection(NodeInboundsMode.panel, ["HY2"])
+
+    assert getattr(exc_info.value, "status_code") == 400
+    assert "host" in exc_info.value.detail.lower()
+    assert "HY2" in exc_info.value.detail
+
+
+def test_node_inbounds_validation_rejects_same_transport_port_conflict(monkeypatch):
+    config = _same_tcp_port_config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(
+        operations.xray,
+        "hosts",
+        {"VLESS": [{"address": "example.com"}], "VMESS": [{"address": "example.com"}]},
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        validate_inbounds_selection(NodeInboundsMode.panel, ["VLESS", "VMESS"])
+
+    assert getattr(exc_info.value, "status_code") == 400
+    assert "port" in exc_info.value.detail.lower()
+    assert "443" in exc_info.value.detail
+
+
+def test_node_inbounds_validation_rejects_wildcard_bind_port_conflict(monkeypatch):
+    config = _wildcard_tcp_port_config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(
+        operations.xray,
+        "hosts",
+        {"PUBLIC": [{"address": "example.com"}], "LOCAL": [{"address": "example.com"}]},
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        validate_inbounds_selection(NodeInboundsMode.panel, ["PUBLIC", "LOCAL"])
+
+    assert getattr(exc_info.value, "status_code") == 400
+    assert "port" in exc_info.value.detail.lower()
+    assert "443" in exc_info.value.detail
+
+
+def test_node_inbounds_validation_allows_udp_and_tcp_on_same_port(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(
+        operations.xray,
+        "hosts",
+        {"HY2": [{"address": "example.com"}], "VLESS": [{"address": "example.com"}]},
+    )
+
+    warnings = validate_inbounds_selection(
+        NodeInboundsMode.panel,
+        ["HY2", "VLESS"],
+        runtime_node=SimpleNamespace(
+            installed_cores={"sing-box": {"installed": True}},
+        ),
+    )
+
+    assert any("reachability" in warning.lower() for warning in warnings)
+
+
+def test_node_inbounds_validation_rejects_missing_required_core(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(operations.xray, "hosts", {"HY2": [{"address": "example.com"}]})
+
+    with pytest.raises(Exception) as exc_info:
+        validate_inbounds_selection(
+            NodeInboundsMode.panel,
+            ["HY2"],
+            runtime_node=SimpleNamespace(
+                installed_cores={"sing-box": {"installed": False}},
+            ),
+        )
+
+    assert getattr(exc_info.value, "status_code") == 400
+    assert "sing-box" in exc_info.value.detail
+
+
+def test_node_inbounds_validation_rejects_sing_box_unsupported_protocol(monkeypatch):
+    config = _hy2_vmess_config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(
+        operations.xray,
+        "hosts",
+        {"HY2": [{"address": "example.com"}], "VMESS": [{"address": "example.com"}]},
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        validate_inbounds_selection(
+            NodeInboundsMode.panel,
+            ["HY2", "VMESS"],
+            runtime_node=SimpleNamespace(
+                installed_cores={"sing-box": {"installed": True}},
+            ),
+        )
+
+    assert getattr(exc_info.value, "status_code") == 400
+    assert "sing-box" in exc_info.value.detail
+    assert "VMESS" in exc_info.value.detail
+
+
 def test_node_api_iterator_skips_inbounds_not_running_on_panel_node():
     class Node:
         connected = True
@@ -336,7 +535,7 @@ def test_update_user_restarts_nodes_when_hysteria_proxy_was_removed(monkeypatch)
     monkeypatch.setattr(
         operations,
         "_restart_started_nodes_for_config_reload",
-        lambda: reloads.append(True),
+        lambda inbound_tags=None: reloads.append(set(inbound_tags or [])),
     )
     monkeypatch.setattr(operations, "_alter_inbound_user", lambda *args, **kwargs: None)
     monkeypatch.setattr(operations, "_remove_user_from_inbound", lambda *args, **kwargs: None)
@@ -360,4 +559,4 @@ def test_update_user_restarts_nodes_when_hysteria_proxy_was_removed(monkeypatch)
 
     operations.update_user(dbuser)
 
-    assert reloads == [True]
+    assert reloads == [{"HY2"}]

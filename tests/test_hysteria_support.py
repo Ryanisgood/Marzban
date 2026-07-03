@@ -43,6 +43,12 @@ def _hysteria_inbound():
     }
 
 
+def _hysteria_inbound_with_tag(tag):
+    inbound = _hysteria_inbound()
+    inbound["tag"] = tag
+    return inbound
+
+
 def _dbuser_with_hysteria(auth="secret-auth"):
     return DBUser(
         id=7,
@@ -207,14 +213,21 @@ def test_hysteria_user_changes_restart_started_nodes_for_sing_box(monkeypatch):
     config = XRayConfig(_base_config(_hysteria_inbound()))
     restarted = []
 
-    class Node:
+    class HysteriaNode:
         connected = True
         started = True
+        active_inbounds = ["HY2"]
+        api = object()
+
+    class VlessOnlyNode:
+        connected = True
+        started = True
+        active_inbounds = ["VLESS"]
         api = object()
 
     monkeypatch.setattr(xray, "config", config)
     monkeypatch.setattr(xray, "api", object())
-    monkeypatch.setattr(xray, "nodes", {42: Node()})
+    monkeypatch.setattr(xray, "nodes", {42: HysteriaNode(), 43: VlessOnlyNode()})
     monkeypatch.setattr(user_models, "generate_v2ray_links", lambda *args, **kwargs: [])
     monkeypatch.setattr(user_models, "create_subscription_token", lambda username: "token")
     monkeypatch.setattr(operations, "_add_user_to_inbound", lambda *args, **kwargs: None)
@@ -228,6 +241,94 @@ def test_hysteria_user_changes_restart_started_nodes_for_sing_box(monkeypatch):
     operations.remove_user(dbuser)
 
     assert restarted == [42, 42, 42]
+
+
+def test_hysteria_user_migration_restarts_old_and_new_inbound_nodes(monkeypatch):
+    config = XRayConfig(
+        {
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                _hysteria_inbound_with_tag("HY2_A"),
+                _hysteria_inbound_with_tag("HY2_B"),
+                _hysteria_inbound_with_tag("HY2_C"),
+            ],
+            "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
+        }
+    )
+    restarted = []
+
+    class NodeA:
+        connected = True
+        started = True
+        active_inbounds = ["HY2_A"]
+        api = object()
+
+    class NodeB:
+        connected = True
+        started = True
+        active_inbounds = ["HY2_B"]
+        api = object()
+
+    class NodeC:
+        connected = True
+        started = True
+        active_inbounds = ["HY2_C"]
+        api = object()
+
+    monkeypatch.setattr(xray, "config", config)
+    monkeypatch.setattr(xray, "api", object())
+    monkeypatch.setattr(xray, "nodes", {1: NodeA(), 2: NodeB(), 3: NodeC()})
+    monkeypatch.setattr(user_models, "generate_v2ray_links", lambda *args, **kwargs: [])
+    monkeypatch.setattr(user_models, "create_subscription_token", lambda username: "token")
+    monkeypatch.setattr(operations, "_alter_inbound_user", lambda *args, **kwargs: None)
+    monkeypatch.setattr(operations, "_remove_user_from_inbound", lambda *args, **kwargs: None)
+    monkeypatch.setattr(operations, "restart_node", lambda node_id: restarted.append(node_id))
+
+    operations.update_user(
+        _dbuser_with_hysteria(auth="new-secret"),
+        config_reload_inbounds={"HY2_A", "HY2_B"},
+    )
+
+    assert restarted == [1, 2]
+
+
+def test_hysteria_user_removal_restarts_only_previous_inbound_nodes(monkeypatch):
+    config = XRayConfig(
+        {
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                _hysteria_inbound_with_tag("HY2_A"),
+                _hysteria_inbound_with_tag("HY2_B"),
+            ],
+            "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
+        }
+    )
+    restarted = []
+
+    class NodeA:
+        connected = True
+        started = True
+        active_inbounds = ["HY2_A"]
+        api = object()
+
+    class NodeB:
+        connected = True
+        started = True
+        active_inbounds = ["HY2_B"]
+        api = object()
+
+    monkeypatch.setattr(xray, "config", config)
+    monkeypatch.setattr(xray, "api", object())
+    monkeypatch.setattr(xray, "nodes", {1: NodeA(), 2: NodeB()})
+    monkeypatch.setattr(operations, "_remove_user_from_inbound", lambda *args, **kwargs: None)
+    monkeypatch.setattr(operations, "restart_node", lambda node_id: restarted.append(node_id))
+
+    operations.remove_user(
+        _dbuser_with_hysteria(),
+        config_reload_inbounds={"HY2_A"},
+    )
+
+    assert restarted == [1]
 
 
 def test_v2ray_share_link_generates_hysteria2_uri():

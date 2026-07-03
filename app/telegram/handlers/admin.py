@@ -42,6 +42,30 @@ from config import TELEGRAM_DEFAULT_VLESS_FLOW, TELEGRAM_LOGGER_CHANNEL_ID
 mem_store = MemoryStorage()
 
 
+def _hysteria_reload_inbounds(db_user):
+    return xray.operations._hysteria_inbound_tags_from_user(db_user)
+
+
+def _update_user_runtime(old_user, updated_user):
+    affected_hysteria_inbounds = (
+        _hysteria_reload_inbounds(old_user)
+        | _hysteria_reload_inbounds(updated_user)
+    )
+    xray.operations.update_user(
+        updated_user,
+        config_reload_inbounds=affected_hysteria_inbounds,
+    )
+
+
+def _remove_user_runtime(db_user, affected_hysteria_inbounds=None):
+    if affected_hysteria_inbounds is None:
+        affected_hysteria_inbounds = _hysteria_reload_inbounds(db_user)
+    xray.operations.remove_user(
+        db_user,
+        config_reload_inbounds=affected_hysteria_inbounds,
+    )
+
+
 def get_system_info():
     mem = memory_usage()
     cpu = cpu_usage()
@@ -1492,8 +1516,9 @@ def confirm_user_command(call: types.CallbackQuery):
         username = call.data.split(':')[2]
         with GetDB() as db:
             db_user = crud.get_user(db, username)
+            affected_hysteria_inbounds = _hysteria_reload_inbounds(db_user)
             crud.remove_user(db, db_user)
-            xray.operations.remove_user(db_user)
+            _remove_user_runtime(db_user, affected_hysteria_inbounds)
 
         bot.edit_message_text(
             '✅ User deleted.',
@@ -1519,9 +1544,10 @@ def confirm_user_command(call: types.CallbackQuery):
         username = call.data.split(":")[2]
         with GetDB() as db:
             db_user = crud.get_user(db, username)
+            affected_hysteria_inbounds = _hysteria_reload_inbounds(db_user)
             crud.update_user(db, db_user, UserModify(
                 status=UserStatusModify.disabled))
-            xray.operations.remove_user(db_user)
+            _remove_user_runtime(db_user, affected_hysteria_inbounds)
             bot.edit_message_text(
                 get_user_info_text(db_user),
                 call.message.chat.id,
@@ -1732,12 +1758,16 @@ def confirm_user_command(call: types.CallbackQuery):
                     inbounds=inbounds
                 )
             last_user = UserResponse.model_validate(db_user)
+            old_hysteria_inbounds = _hysteria_reload_inbounds(db_user)
             db_user = crud.update_user(db, db_user, modify)
 
             user = UserResponse.model_validate(db_user)
 
             if user.status == UserStatus.active:
-                xray.operations.update_user(db_user)
+                xray.operations.update_user(
+                    db_user,
+                    config_reload_inbounds=old_hysteria_inbounds | _hysteria_reload_inbounds(db_user),
+                )
 
             bot.answer_callback_query(call.id, "✅ User updated successfully.")
             bot.edit_message_text(
@@ -1921,8 +1951,9 @@ def confirm_user_command(call: types.CallbackQuery):
                 deleted = 0
                 for user in depleted_users:
                     try:
+                        affected_hysteria_inbounds = _hysteria_reload_inbounds(user)
                         crud.remove_user(db, user)
-                        xray.operations.remove_user(user)
+                        _remove_user_runtime(user, affected_hysteria_inbounds)
                         deleted += 1
                         f.write(
                             f'{user.username}\
@@ -2081,9 +2112,13 @@ def confirm_user_command(call: types.CallbackQuery):
                         elif protocol in user.inbounds and protocol not in new_inbounds:
                             del proxies[protocol]
                     try:
+                        old_hysteria_inbounds = _hysteria_reload_inbounds(user)
                         user = crud.update_user(db, user, UserModify(inbounds=new_inbounds, proxies=proxies))
                         if user.status == UserStatus.active:
-                            xray.operations.update_user(user)
+                            xray.operations.update_user(
+                                user,
+                                config_reload_inbounds=old_hysteria_inbounds | _hysteria_reload_inbounds(user),
+                            )
                     except:
                         db.rollback()
                         unsuccessful += 1

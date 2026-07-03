@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, WebSocket
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +27,9 @@ router = APIRouter(
     tags=["Node"], prefix="/api", responses={401: responses._401, 403: responses._403}
 )
 
+SING_BOX_SUPPORTED_PROTOCOLS = {"hysteria", "vless", "shadowsocks", "trojan"}
+WILDCARD_BINDS = {"0.0.0.0", "::", ""}
+
 
 def add_host_if_needed(new_node: NodeCreate, db: Session):
     """Add a host if specified in the new node settings."""
@@ -52,13 +55,162 @@ def validate_active_inbounds(active_inbounds: List[str]):
         )
 
 
-def validate_inbounds_selection(inbounds_mode: NodeInboundsMode, active_inbounds: List[str]):
+def _host_address_values(host: dict):
+    address = host.get("address")
+    if isinstance(address, list):
+        return [item for item in address if item]
+    if address:
+        return [address]
+    return []
+
+
+def _has_usable_host(inbound_tag: str) -> bool:
+    return any(
+        _host_address_values(host)
+        for host in xray.hosts.get(inbound_tag, [])
+    )
+
+
+def _inbound_transport(inbound: dict, raw_inbound: Optional[dict] = None) -> str:
+    protocol = inbound.get("protocol")
+    network = inbound.get("network")
+    if protocol == "hysteria" or network in {"hysteria", "kcp", "quic"}:
+        return "udp"
+    if raw_inbound and raw_inbound.get("protocol") == "dokodemo-door":
+        return "tcp"
+    return "tcp"
+
+
+def _inbound_bind(raw_inbound: Optional[dict]) -> str:
+    listen = (raw_inbound or {}).get("listen") or "0.0.0.0"
+    if isinstance(listen, dict):
+        return listen.get("address") or "0.0.0.0"
+    return listen
+
+
+def _binds_conflict(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    return left in WILDCARD_BINDS or right in WILDCARD_BINDS
+
+
+def _required_core_for_tags(active_inbounds: List[str]) -> str:
+    for tag in active_inbounds:
+        inbound = xray.config.inbounds_by_tag.get(tag)
+        if (
+            inbound
+            and inbound.get("protocol") == "hysteria"
+            and inbound.get("network") == "hysteria"
+        ):
+            return "sing-box"
+    return "xray"
+
+
+def _core_installed(runtime_node, core: str) -> Optional[bool]:
+    if runtime_node is None:
+        return None
+    installed_cores = getattr(runtime_node, "installed_cores", None) or {}
+    core_info = installed_cores.get(core)
+    if core_info is None:
+        return None
+    if isinstance(core_info, dict):
+        return bool(core_info.get("installed"))
+    return bool(getattr(core_info, "installed", None))
+
+
+def _validate_no_port_conflicts(active_inbounds: List[str]):
+    seen = []
+    for tag in active_inbounds:
+        inbound = xray.config.inbounds_by_tag.get(tag)
+        raw_inbound = xray.config.get_inbound(tag)
+        if not inbound:
+            continue
+        port = inbound.get("port")
+        if not isinstance(port, int):
+            continue
+
+        transport = _inbound_transport(inbound, raw_inbound)
+        bind = _inbound_bind(raw_inbound)
+        for seen_transport, seen_bind, seen_port, seen_tag in seen:
+            if (
+                seen_transport == transport
+                and seen_port == port
+                and _binds_conflict(seen_bind, bind)
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Inbound port conflict: "
+                        f"{seen_tag} and {tag} both use {transport} {bind}:{port}"
+                    ),
+                )
+        seen.append((transport, bind, port, tag))
+
+
+def _validate_sing_box_supported_inbounds(active_inbounds: List[str]):
+    unsupported_tags = []
+    for tag in active_inbounds:
+        inbound = xray.config.inbounds_by_tag.get(tag) or {}
+        protocol = str(inbound.get("protocol") or "")
+        if protocol not in SING_BOX_SUPPORTED_PROTOCOLS:
+            unsupported_tags.append(tag)
+
+    if unsupported_tags:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "sing-box cannot run selected inbound tag(s): "
+                f"{', '.join(unsupported_tags)}"
+            ),
+        )
+
+
+def validate_inbounds_selection(
+    inbounds_mode: NodeInboundsMode,
+    active_inbounds: List[str],
+    *,
+    runtime_node=None,
+    require_hosts: bool = True,
+):
     if inbounds_mode == NodeInboundsMode.panel and not active_inbounds:
         raise HTTPException(
             status_code=400,
             detail="At least one active inbound is required in panel mode",
         )
     validate_active_inbounds(active_inbounds)
+    if inbounds_mode != NodeInboundsMode.panel:
+        return []
+
+    if require_hosts:
+        missing_hosts = [
+            inbound_tag for inbound_tag in active_inbounds
+            if not _has_usable_host(inbound_tag)
+        ]
+        if missing_hosts:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing host for inbound tag(s): {', '.join(missing_hosts)}",
+            )
+
+    _validate_no_port_conflicts(active_inbounds)
+
+    required_core = _required_core_for_tags(active_inbounds)
+    if required_core == "sing-box":
+        _validate_sing_box_supported_inbounds(active_inbounds)
+    installed = _core_installed(runtime_node, required_core)
+    if installed is False:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Required core {required_core} is not installed on this node",
+        )
+
+    warnings = []
+    if runtime_node is None:
+        warnings.append("Node runtime status is unavailable; core installation cannot be verified")
+    elif installed is None:
+        warnings.append(f"Node did not report {required_core} installation status")
+    warnings.append("Public firewall/reachability status is unknown; verify the inbound ports externally")
+    return warnings
 
 
 def node_response(dbnode, inbound_user_counts=None) -> NodeResponse:
@@ -88,7 +240,11 @@ def add_node(
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Add a new node to the database and optionally add it as a host."""
-    validate_inbounds_selection(new_node.inbounds_mode, new_node.active_inbounds)
+    validate_inbounds_selection(
+        new_node.inbounds_mode,
+        new_node.active_inbounds,
+        require_hosts=not new_node.add_as_new_host,
+    )
     try:
         dbnode = crud.create_node(db, new_node)
     except IntegrityError:
@@ -220,7 +376,11 @@ def modify_node(
         else dbnode.active_inbounds
     )
     inbounds_mode = modified_node.inbounds_mode or dbnode.inbounds_mode
-    validate_inbounds_selection(inbounds_mode, active_inbounds)
+    validate_inbounds_selection(
+        inbounds_mode,
+        active_inbounds,
+        runtime_node=xray.nodes.get(dbnode.id),
+    )
 
     updated_node = crud.update_node(db, dbnode, modified_node)
     if updated_node.status == NodeStatus.disabled:

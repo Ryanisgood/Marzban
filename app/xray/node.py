@@ -94,6 +94,12 @@ class ReSTXRayNode:
         self._features = []
         self._core_kind = None
         self._last_started_inbounds = None
+        self._node_version = None
+        self._installed_cores = {}
+        self._memory = {}
+        self._local_listening_ports = []
+        self._configured_inbound_ports = []
+        self._last_core_restart_at = None
 
     def _prepare_config(self, config: XRayConfig):
         config = deepcopy(config)
@@ -168,6 +174,30 @@ class ReSTXRayNode:
     @property
     def last_started_inbounds(self):
         return self._last_started_inbounds
+
+    @property
+    def node_version(self):
+        return self._node_version
+
+    @property
+    def installed_cores(self):
+        return self._installed_cores
+
+    @property
+    def memory(self):
+        return self._memory
+
+    @property
+    def local_listening_ports(self):
+        return self._local_listening_ports
+
+    @property
+    def configured_inbound_ports(self):
+        return self._configured_inbound_ports
+
+    @property
+    def last_core_restart_at(self):
+        return self._last_core_restart_at
 
     @property
     def api(self):
@@ -303,6 +333,12 @@ class ReSTXRayNode:
         self._features = response.get("features") or []
         self._xray_api_available = response.get('xray_api', True)
         self._core_kind = response.get("core_kind")
+        self._node_version = response.get("node_version")
+        self._installed_cores = response.get("installed_cores") or {}
+        self._memory = response.get("memory") or {}
+        self._local_listening_ports = response.get("local_listening_ports") or []
+        self._configured_inbound_ports = response.get("configured_inbound_ports") or []
+        self._last_core_restart_at = response.get("last_core_restart_at")
 
     def _configure_xray_api(self, response: dict):
         self._api = None
@@ -421,6 +457,12 @@ class RPyCXRayNode:
         self._core_kind = None
         self._xray_api_available = True
         self._last_started_inbounds = None
+        self._node_version = None
+        self._installed_cores = {}
+        self._memory = {}
+        self._local_listening_ports = []
+        self._configured_inbound_ports = []
+        self._last_core_restart_at = None
 
     def disconnect(self):
         try:
@@ -492,6 +534,30 @@ class RPyCXRayNode:
     @property
     def last_started_inbounds(self):
         return self._last_started_inbounds
+
+    @property
+    def node_version(self):
+        return self._node_version
+
+    @property
+    def installed_cores(self):
+        return self._installed_cores
+
+    @property
+    def memory(self):
+        return self._memory
+
+    @property
+    def local_listening_ports(self):
+        return self._local_listening_ports
+
+    @property
+    def configured_inbound_ports(self):
+        return self._configured_inbound_ports
+
+    @property
+    def last_core_restart_at(self):
+        return self._last_core_restart_at
 
     def get_version(self):
         return self.remote.fetch_xray_version()
