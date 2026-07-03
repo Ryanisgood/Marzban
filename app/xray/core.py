@@ -10,6 +10,27 @@ from app.xray.config import XRayConfig
 from config import DEBUG
 
 
+def parse_x25519_output(output: str):
+    private = None
+    public = None
+
+    for line in output.splitlines():
+        key, _, value = line.partition(":")
+        normalized = key.strip().lower()
+        value = value.strip()
+
+        if normalized in {"private key", "privatekey"}:
+            private = value
+        elif normalized in {"public key", "publickey", "password (publickey)"}:
+            public = value
+
+    if private and public:
+        return {
+            "private_key": private,
+            "public_key": public
+        }
+
+
 class XRayCore:
     def __init__(self,
                  executable_path: str = "/usr/bin/xray",
@@ -43,13 +64,7 @@ class XRayCore:
         if private_key:
             cmd.extend(['-i', private_key])
         output = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8')
-        m = re.match(r'Private key: (.+)\nPublic key: (.+)', output)
-        if m:
-            private, public = m.groups()
-            return {
-                "private_key": private,
-                "public_key": public
-            }
+        return parse_x25519_output(output)
 
     def __capture_process_logs(self):
         def capture_and_debug_log():
