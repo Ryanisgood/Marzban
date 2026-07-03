@@ -18,7 +18,12 @@ from app.models.node_provision import (
     NodeProvisionProtocol,
 )
 from app.xray.config import XRayConfig
-from config import XRAY_JSON
+from config import (
+    MARZBAN_NODE_BINARY_URL,
+    SING_BOX_INSTALL_SCRIPT_URL,
+    XRAY_INSTALL_SCRIPT_URL,
+    XRAY_JSON,
+)
 
 
 ProtocolPort = Tuple[NodeProvisionProtocol, int]
@@ -195,6 +200,10 @@ def apply_provisioned_config(payload: dict) -> None:
 def redeem_node_install_payload(
     db: Session,
     token: str,
+    *,
+    binary_url: str = MARZBAN_NODE_BINARY_URL,
+    xray_install_url: str = XRAY_INSTALL_SCRIPT_URL,
+    sing_box_install_url: str = SING_BOX_INSTALL_SCRIPT_URL,
 ) -> NodeInstallPayload | None:
     record = crud.redeem_node_provision_token(db, token)
     if not record:
@@ -222,6 +231,10 @@ def redeem_node_install_payload(
         active_inbounds=record.active_inbounds,
         core_kind=record.core_kind,
         ssl_client_cert=tls.certificate,
+        binary_url=binary_url,
+        core_install_url=sing_box_install_url
+        if record.core_kind == "sing-box"
+        else xray_install_url,
         env=env,
     )
 
@@ -258,6 +271,34 @@ fi
 PAYLOAD="$(curl -fsSL -X POST "{redeem_url}" \\
   -H "Content-Type: application/json" \\
   --data "{{\\"token\\":\\"$TOKEN\\"}}")"
+
+BINARY_URL="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("binary_url", ""))' "$PAYLOAD")"
+CORE_KIND="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("core_kind", ""))' "$PAYLOAD")"
+CORE_INSTALL_URL="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("core_install_url", ""))' "$PAYLOAD")"
+
+if [ -n "$BINARY_URL" ]; then
+  curl -fsSL "$BINARY_URL" -o /usr/local/bin/marzban-node
+  chmod 0755 /usr/local/bin/marzban-node
+elif ! command -v marzban-node >/dev/null 2>&1; then
+  echo "marzban-node is not installed and binary_url is empty" >&2
+  exit 2
+fi
+
+if [ "$CORE_KIND" = "xray" ] && ! command -v xray >/dev/null 2>&1; then
+  if [ -z "$CORE_INSTALL_URL" ]; then
+    echo "xray is not installed and core_install_url is empty" >&2
+    exit 2
+  fi
+  bash -c "$(curl -fsSL "$CORE_INSTALL_URL")" @ install
+fi
+
+if [ "$CORE_KIND" = "sing-box" ] && ! command -v sing-box >/dev/null 2>&1; then
+  if [ -z "$CORE_INSTALL_URL" ]; then
+    echo "sing-box is not installed and core_install_url is empty" >&2
+    exit 2
+  fi
+  curl -fsSL "$CORE_INSTALL_URL" | sh
+fi
 
 install -d -m 0755 /var/lib/marzban-node
 printf '%s' "$PAYLOAD" | python3 -c 'import json,sys; print(json.load(sys.stdin)["ssl_client_cert"])' > /var/lib/marzban-node/ssl_client_cert.pem

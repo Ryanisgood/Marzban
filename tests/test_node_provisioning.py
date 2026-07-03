@@ -288,13 +288,20 @@ def test_redeem_node_install_payload_returns_one_time_config_without_private_key
         expires_at=datetime.utcnow() + timedelta(minutes=10),
     )
 
-    payload = redeem_node_install_payload(db, token)
+    payload = redeem_node_install_payload(
+        db,
+        token,
+        binary_url="https://panel.example.com/download/marzban-node",
+        sing_box_install_url="https://panel.example.com/download/install-sing-box.sh",
+    )
 
     assert payload is not None
     assert payload.node_id == dbnode.id
     assert payload.core_kind == "sing-box"
     assert payload.active_inbounds == ["node-1-hy2-8443"]
     assert payload.ssl_client_cert == "controller-public-cert"
+    assert payload.binary_url == "https://panel.example.com/download/marzban-node"
+    assert payload.core_install_url == "https://panel.example.com/download/install-sing-box.sh"
     assert "INBOUNDS" not in payload.env
     assert "controller-private-key" not in payload.model_dump_json()
     assert redeem_node_install_payload(db, token) is None
@@ -305,4 +312,7 @@ def test_render_node_install_script_requires_token_and_does_not_write_inbounds()
 
     assert "--token" in script
     assert "https://panel.example.com/api/node/provision/redeem" in script
+    assert "binary_url" in script
+    assert "core_install_url" in script
+    assert "/usr/local/bin/marzban-node" in script
     assert "INBOUNDS=" not in script

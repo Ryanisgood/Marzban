@@ -46,4 +46,6 @@ class NodeInstallPayload(BaseModel):
     active_inbounds: List[str]
     core_kind: str
     ssl_client_cert: str
+    binary_url: str = ""
+    core_install_url: str = ""
     env: Dict[str, str]

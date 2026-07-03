@@ -31,6 +31,12 @@ XRAY_FALLBACKS_INBOUND_TAG = config("XRAY_FALLBACKS_INBOUND_TAG", cast=str, defa
 )
 XRAY_EXECUTABLE_PATH = config("XRAY_EXECUTABLE_PATH", default="/usr/local/bin/xray")
 XRAY_ASSETS_PATH = config("XRAY_ASSETS_PATH", default="/usr/local/share/xray")
+MARZBAN_NODE_BINARY_URL = config("MARZBAN_NODE_BINARY_URL", default="")
+XRAY_INSTALL_SCRIPT_URL = config(
+    "XRAY_INSTALL_SCRIPT_URL",
+    default="https://github.com/XTLS/Xray-install/raw/main/install-release.sh",
+)
+SING_BOX_INSTALL_SCRIPT_URL = config("SING_BOX_INSTALL_SCRIPT_URL", default="")
 XRAY_EXCLUDE_INBOUND_TAGS = config("XRAY_EXCLUDE_INBOUND_TAGS", default='').split()
 XRAY_SUBSCRIPTION_URL_PREFIX = config("XRAY_SUBSCRIPTION_URL_PREFIX", default="").strip("/")
 XRAY_SUBSCRIPTION_PATH = config("XRAY_SUBSCRIPTION_PATH", default="sub").strip("/")
