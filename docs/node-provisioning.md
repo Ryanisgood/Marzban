@@ -61,15 +61,16 @@ Every node needs:
 
 The installer:
 
-- redeems the token once;
+- reads the install payload without consuming the token;
 - downloads `/usr/local/bin/marzban-node` when `MARZBAN_NODE_BINARY_URL` is configured;
 - installs only the required core;
 - writes the controller client certificate to `/var/lib/marzban-node/ssl_client_cert.pem`;
 - generates the node server certificate and private key locally;
 - writes `/etc/marzban-node.env` without `INBOUNDS`;
 - installs and starts `marzban-node.service`.
+- consumes the token after `systemctl enable --now marzban-node` succeeds.
 
-The token is short-lived and one-time use. The database stores only its hash.
+The token is short-lived and one-time use. The database stores only its hash. Installer failures before service startup do not consume the token, so the same generated command can be retried after fixing local package, network, or permission issues.
 
 ## Pitfalls From Rollout
 
@@ -81,6 +82,7 @@ The token is short-lived and one-time use. The database stores only its hash.
 - Do not deploy HY2 with an empty `SING_BOX_INSTALL_SCRIPT_URL` unless the node image already contains `sing-box`.
 - If core restart fails during provisioning, the controller restores the previous config file and in-memory config.
 - If a generated install command is lost, create a new node or add a token rotation endpoint later; the plaintext token is intentionally shown only once.
+- If the installer fails after starting the service but before the final consume request, rerunning the command is still idempotent: it rewrites the same env/service files and then consumes the token.
 
 ## Verification
 
