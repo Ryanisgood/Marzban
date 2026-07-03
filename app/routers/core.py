@@ -11,7 +11,11 @@ from app.models.admin import Admin
 from app.models.core import CoreStats
 from app.utils import responses
 from app.xray import XRayConfig
-from app.xray.node_provisioning import apply_provisioned_config
+from app.xray.node_provisioning import (
+    apply_provisioned_config,
+    cleanup_orphaned_provisioned_inbounds,
+    validate_core_config_preserves_panel_inbounds,
+)
 from config import XRAY_JSON
 
 router = APIRouter(tags=["Core"], prefix="/api", responses={401: responses._401})
@@ -109,10 +113,14 @@ def get_core_config(admin: Admin = Depends(Admin.check_sudo_admin)) -> dict:
 
 @router.put("/core/config", responses={403: responses._403})
 def modify_core_config(
-    payload: dict, admin: Admin = Depends(Admin.check_sudo_admin)
+    payload: dict,
+    admin: Admin = Depends(Admin.check_sudo_admin),
+    db: Session = Depends(get_db),
 ) -> dict:
     """Modify the core configuration and restart the core."""
     try:
+        validate_core_config_preserves_panel_inbounds(db, payload)
+        payload, _ = cleanup_orphaned_provisioned_inbounds(db, payload)
         XRayConfig(payload, api_port=xray.config.api_port)
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err))

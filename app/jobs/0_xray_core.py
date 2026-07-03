@@ -4,6 +4,7 @@ import traceback
 from app import app, logger, scheduler, xray
 from app.db import GetDB, crud
 from app.models.node import NodeStatus
+from app.xray.node_provisioning import reconcile_orphaned_provisioned_config
 from config import JOB_CORE_HEALTH_CHECK_INTERVAL
 from xray_api import exc as xray_exc
 
@@ -37,6 +38,14 @@ def core_health_check():
 @app.on_event("startup")
 def start_core():
     logger.info("Generating Xray core config")
+
+    with GetDB() as db:
+        removed_tags = reconcile_orphaned_provisioned_config(db)
+        if removed_tags:
+            logger.warning(
+                "Removed orphaned provisioned inbound(s): %s",
+                ", ".join(removed_tags),
+            )
 
     start_time = time.time()
     config = xray.config.include_db_users()

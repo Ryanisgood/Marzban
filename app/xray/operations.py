@@ -302,6 +302,8 @@ def connect_node(node_id, config=None):
         node.start(config)
         version = node.get_version()
         _change_node_status(node_id, NodeStatus.connected, version=version)
+        with GetDB() as db:
+            crud.redeem_node_provision_tokens_for_node(db, node_id)
         logger.info(f"Connected to \"{dbnode.name}\" node, xray run on v{version}")
 
     except Exception as e:

@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import tempfile
 import threading
@@ -32,6 +33,9 @@ from config import (
 
 ProtocolPort = Tuple[NodeProvisionProtocol, int]
 _config_apply_lock = threading.RLock()
+_GENERATED_INBOUND_TAG = re.compile(
+    r"^node-\d+-(hy2|vless-reality|shadowsocks)-\d+$"
+)
 
 
 @dataclass
@@ -250,30 +254,92 @@ def validate_install_sources(
         )
 
 
+def validate_core_config_preserves_panel_inbounds(db: Session, payload: dict) -> None:
+    requested_tags = {
+        inbound.get("tag")
+        for inbound in payload.get("inbounds", [])
+        if inbound.get("tag")
+    }
+    managed_tags = _panel_managed_inbound_tags(db)
+    missing_tags = sorted(managed_tags - requested_tags)
+    if missing_tags:
+        raise ValueError(
+            "Core config is missing panel-managed inbound(s): "
+            + ", ".join(missing_tags)
+        )
+
+
+def cleanup_orphaned_provisioned_inbounds(
+    db: Session, payload: dict
+) -> tuple[dict, list[str]]:
+    known_tags = {
+        tag
+        for (tag,) in db.query(ProxyInbound.tag).all()
+        if tag
+    }
+    cleaned = deepcopy(payload)
+    removed_tags = []
+    retained_inbounds = []
+    for inbound in cleaned.get("inbounds", []):
+        tag = inbound.get("tag")
+        if (
+            tag
+            and _GENERATED_INBOUND_TAG.match(tag)
+            and tag not in known_tags
+        ):
+            removed_tags.append(tag)
+            continue
+        retained_inbounds.append(inbound)
+
+    cleaned["inbounds"] = retained_inbounds
+    return cleaned, removed_tags
+
+
+def reconcile_orphaned_provisioned_config(db: Session) -> list[str]:
+    with _config_apply_lock:
+        cleaned, removed_tags = cleanup_orphaned_provisioned_inbounds(db, xray.config.copy())
+        if not removed_tags:
+            return []
+        xray.config = XRayConfig(cleaned, api_port=xray.config.api_port)
+        _atomic_write_text(XRAY_JSON, json.dumps(cleaned, indent=4))
+        xray.hosts.update()
+        return removed_tags
+
+
+def _panel_managed_inbound_tags(db: Session) -> set[str]:
+    rows = (
+        db.query(DBNode)
+        .filter(DBNode.inbounds_mode == NodeInboundsMode.panel)
+        .all()
+    )
+    return {
+        tag
+        for node in rows
+        for tag in node.active_inbounds
+    }
+
+
 def validate_generated_inbound_conflicts(
     current_config: dict, generated_inbounds: Sequence[dict]
 ) -> None:
     occupied = {}
     for inbound in current_config.get("inbounds", []):
-        endpoint = _inbound_endpoint(inbound)
-        if endpoint:
+        for endpoint in _inbound_endpoints(inbound):
             occupied.setdefault(endpoint, inbound.get("tag", "<existing>"))
 
     generated_seen = {}
     for inbound in generated_inbounds:
-        endpoint = _inbound_endpoint(inbound)
-        if not endpoint:
-            continue
-        tag = inbound["tag"]
-        if endpoint in generated_seen:
-            raise ValueError(
-                f"Generated inbound port conflict: {tag} conflicts with {generated_seen[endpoint]}"
-            )
-        if endpoint in occupied:
-            raise ValueError(
-                f"Generated inbound port conflict: {tag} conflicts with {occupied[endpoint]}"
-            )
-        generated_seen[endpoint] = tag
+        for endpoint in _inbound_endpoints(inbound):
+            tag = inbound["tag"]
+            if endpoint in generated_seen:
+                raise ValueError(
+                    f"Generated inbound port conflict: {tag} conflicts with {generated_seen[endpoint]}"
+                )
+            if endpoint in occupied:
+                raise ValueError(
+                    f"Generated inbound port conflict: {tag} conflicts with {occupied[endpoint]}"
+                )
+            generated_seen[endpoint] = tag
 
 
 def validate_requested_port_conflicts(
@@ -284,8 +350,7 @@ def validate_requested_port_conflicts(
 ) -> None:
     occupied = {}
     for inbound in current_config.get("inbounds", []):
-        endpoint = _inbound_endpoint(inbound)
-        if endpoint:
+        for endpoint in _inbound_endpoints(inbound):
             occupied.setdefault(endpoint, inbound.get("tag", "<existing>"))
 
     generated_seen = {}
@@ -313,17 +378,20 @@ def validate_requested_port_conflicts(
         generated_seen[endpoint] = label
 
 
-def _inbound_endpoint(inbound: dict) -> tuple[str, int, str] | None:
+def _inbound_endpoints(inbound: dict) -> list[tuple[str, int, str]]:
     port = inbound.get("port")
     if port is None:
-        return None
+        return []
     try:
         normalized_port = int(port)
     except (TypeError, ValueError):
-        return None
+        return []
 
     listen = inbound.get("listen") or "0.0.0.0"
-    return _normalize_bind(listen), normalized_port, _inbound_transport(inbound)
+    return [
+        (_normalize_bind(listen), normalized_port, transport)
+        for transport in _inbound_transports(inbound)
+    ]
 
 
 def _protocol_transport(protocol: NodeProvisionProtocol) -> str:
@@ -355,19 +423,27 @@ def _binds_conflict(left: str, right: str) -> bool:
     return left == right or left == "" or right == ""
 
 
-def _inbound_transport(inbound: dict) -> str:
+def _inbound_transports(inbound: dict) -> set[str]:
     stream_settings = inbound.get("streamSettings") or {}
     network = stream_settings.get("network")
     if network in {"hysteria", "hysteria2", "quic"}:
-        return "udp"
+        return {"udp"}
     settings = inbound.get("settings") or {}
-    if settings.get("network") == "udp":
-        return "udp"
-    return "tcp"
+    settings_network = settings.get("network")
+    if isinstance(settings_network, str):
+        transports = {
+            item.strip()
+            for item in settings_network.split(",")
+            if item.strip() in {"tcp", "udp"}
+        }
+        if transports:
+            return transports
+    return {"tcp"}
 
 
 def apply_provisioned_config(payload: dict) -> None:
-    _apply_provisioned_config(payload)
+    with _config_apply_lock:
+        _apply_provisioned_config(payload)
 
 
 def _apply_provisioned_config(payload: dict) -> None:
@@ -446,6 +522,8 @@ def redeem_node_install_payload(
 
     tls = crud.get_tls_certificate(db)
     node = record.node
+    if node is None:
+        return None
     env = {
         "SERVICE_HOST": "0.0.0.0",
         "SERVICE_PORT": str(node.port),
@@ -588,8 +666,4 @@ for attempt in $(seq 1 10); do
   fi
   sleep 1
 done
-
-curl -fsSL -X POST "{redeem_url}" \\
-  -H "Content-Type: application/json" \\
-  --data "{{\\"token\\":\\"$TOKEN\\",\\"consume\\":true}}" >/dev/null
 """

@@ -1408,6 +1408,25 @@ def get_node_provision_token(
     )
 
 
+def redeem_node_provision_tokens_for_node(
+    db: Session,
+    node_id: int,
+    *,
+    now: Optional[datetime] = None,
+) -> int:
+    now = now or datetime.utcnow()
+    updated = (
+        db.query(NodeProvisionToken)
+        .filter(NodeProvisionToken.node_id == node_id)
+        .filter(NodeProvisionToken.redeemed_at.is_(None))
+        .filter(NodeProvisionToken.revoked_at.is_(None))
+        .filter(NodeProvisionToken.expires_at > now)
+        .update({NodeProvisionToken.redeemed_at: now}, synchronize_session=False)
+    )
+    db.commit()
+    return updated
+
+
 def remove_node(db: Session, dbnode: Node) -> Node:
     """
     Removes a node from the database.
@@ -1419,6 +1438,14 @@ def remove_node(db: Session, dbnode: Node) -> Node:
     Returns:
         Node: The removed Node object.
     """
+    db.query(NodeProvisionToken).filter(
+        NodeProvisionToken.node_id == dbnode.id,
+        NodeProvisionToken.redeemed_at.is_(None),
+        NodeProvisionToken.revoked_at.is_(None),
+    ).update(
+        {NodeProvisionToken.revoked_at: datetime.utcnow()},
+        synchronize_session=False,
+    )
     db.delete(dbnode)
     db.commit()
     return dbnode
