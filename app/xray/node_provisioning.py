@@ -1,6 +1,9 @@
 import hashlib
 import hmac
 import json
+import os
+import secrets
+import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -58,6 +61,13 @@ def build_generated_inbounds(node_id: int, specs: Sequence[ProtocolPort]) -> lis
     ]
 
 
+def generate_reality_key_pair() -> tuple[str, str] | None:
+    key_pair = xray.core.get_x25519()
+    if not key_pair:
+        return None
+    return key_pair["private_key"], key_pair["public_key"]
+
+
 def _build_inbound(
     *, node_id: int, protocol: NodeProvisionProtocol, port: int
 ) -> dict:
@@ -79,6 +89,12 @@ def _build_inbound(
         }
 
     if protocol == NodeProvisionProtocol.vless_reality:
+        key_pair = generate_reality_key_pair()
+        if not key_pair:
+            raise ValueError(
+                "Unable to generate x25519 key pair for VLESS REALITY inbound"
+            )
+        private_key, public_key = key_pair
         return {
             "tag": tag,
             "listen": "0.0.0.0",
@@ -89,9 +105,9 @@ def _build_inbound(
                 "network": "tcp",
                 "security": "reality",
                 "realitySettings": {
-                    "publicKey": "generated-public-key",
-                    "privateKey": "generated-private-key",
-                    "shortIds": ["0123456789abcdef"],
+                    "publicKey": public_key,
+                    "privateKey": private_key,
+                    "shortIds": [secrets.token_hex(8)],
                     "serverNames": ["example.com"],
                     "SpiderX": "/",
                 },
@@ -182,19 +198,65 @@ def provision_node(
 
 
 def apply_provisioned_config(payload: dict) -> None:
-    config = XRayConfig(payload, api_port=xray.config.api_port)
-    xray.config = config
+    previous_config = xray.config
+    previous_file = _read_optional_file(XRAY_JSON)
 
-    with open(XRAY_JSON, "w") as file:
-        file.write(json.dumps(payload, indent=4))
-
-    startup_config = xray.config.include_db_users()
-    xray.core.restart(startup_config)
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected:
-            xray.operations.restart_node(node_id, startup_config)
+    try:
+        config = XRayConfig(payload, api_port=xray.config.api_port)
+        xray.config = config
+        _atomic_write_text(XRAY_JSON, json.dumps(payload, indent=4))
+        startup_config = xray.config.include_db_users()
+        xray.core.restart(startup_config)
+        for node_id, node in list(xray.nodes.items()):
+            if node.connected:
+                xray.operations.restart_node(node_id, startup_config)
+    except Exception:
+        xray.config = previous_config
+        _restore_optional_file(XRAY_JSON, previous_file)
+        raise
 
     xray.hosts.update()
+
+
+def _read_optional_file(path: str) -> bytes | None:
+    try:
+        with open(path, "rb") as file:
+            return file.read()
+    except FileNotFoundError:
+        return None
+
+
+def _restore_optional_file(path: str, content: bytes | None) -> None:
+    if content is None:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        return
+    _atomic_write_bytes(path, content)
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+    _atomic_write_bytes(path, content.encode())
+
+
+def _atomic_write_bytes(path: str, content: bytes) -> None:
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, temp_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory
+    )
+    try:
+        with os.fdopen(fd, "wb") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp_path, path)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def redeem_node_install_payload(
@@ -301,6 +363,18 @@ if [ "$CORE_KIND" = "sing-box" ] && ! command -v sing-box >/dev/null 2>&1; then
 fi
 
 install -d -m 0755 /var/lib/marzban-node
+if [ ! -s /var/lib/marzban-node/ssl_cert.pem ] || [ ! -s /var/lib/marzban-node/ssl_key.pem ]; then
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "openssl is required to generate node TLS certificate" >&2
+    exit 2
+  fi
+  openssl req -x509 -newkey rsa:2048 -nodes \\
+    -keyout /var/lib/marzban-node/ssl_key.pem \\
+    -out /var/lib/marzban-node/ssl_cert.pem \\
+    -sha256 -days 3650 -subj "/CN=marzban-node"
+  chmod 0600 /var/lib/marzban-node/ssl_key.pem
+  chmod 0644 /var/lib/marzban-node/ssl_cert.pem
+fi
 printf '%s' "$PAYLOAD" | python3 -c 'import json,sys; print(json.load(sys.stdin)["ssl_client_cert"])' > /var/lib/marzban-node/ssl_client_cert.pem
 
 python3 - "$PAYLOAD" >/etc/marzban-node.env <<'PY'

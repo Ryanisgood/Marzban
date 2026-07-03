@@ -71,7 +71,14 @@ def test_install_token_hash_does_not_store_plaintext():
     assert not verify_install_token("other-token", token_hash)
 
 
-def test_build_generated_inbounds_creates_hy2_vless_and_shadowsocks_templates():
+def test_build_generated_inbounds_creates_hy2_vless_and_shadowsocks_templates(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
+    monkeypatch.setattr(
+        provisioning,
+        "generate_reality_key_pair",
+        lambda: ("real-private-key", "real-public-key"),
+    )
     inbounds = build_generated_inbounds(
         node_id=42,
         specs=[
@@ -91,8 +98,27 @@ def test_build_generated_inbounds_creates_hy2_vless_and_shadowsocks_templates():
     assert inbounds[0]["streamSettings"]["network"] == "hysteria"
     assert inbounds[1]["protocol"] == "vless"
     assert inbounds[1]["settings"]["clients"] == []
+    reality_settings = inbounds[1]["streamSettings"]["realitySettings"]
+    assert reality_settings["privateKey"] == "real-private-key"
+    assert reality_settings["publicKey"] == "real-public-key"
     assert inbounds[2]["protocol"] == "shadowsocks"
     assert inbounds[2]["settings"]["clients"] == []
+
+
+def test_vless_reality_inbound_generation_rejects_missing_x25519_keys(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
+    monkeypatch.setattr(provisioning, "generate_reality_key_pair", lambda: None)
+
+    try:
+        build_generated_inbounds(
+            node_id=42,
+            specs=[(NodeProvisionProtocol.vless_reality, 443)],
+        )
+    except ValueError as exc:
+        assert "x25519" in str(exc)
+    else:
+        raise AssertionError("expected VLESS REALITY provisioning to reject missing keys")
 
 
 def test_generated_inbounds_are_visible_to_xray_config():
@@ -162,9 +188,16 @@ def test_redeem_node_provision_token_rejects_expired_token():
     assert redeem_node_provision_token(db, token) is None
 
 
-def test_provision_node_creates_config_hosts_panel_node_and_install_command():
+def test_provision_node_creates_config_hosts_panel_node_and_install_command(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
     db = _db_session()
     applied_configs = []
+    monkeypatch.setattr(
+        provisioning,
+        "generate_reality_key_pair",
+        lambda: ("real-private-key", "real-public-key"),
+    )
     payload = NodeProvisionCreate(
         name="rn1c1g",
         address="node.example.com",
@@ -274,6 +307,67 @@ def test_apply_provisioned_config_uses_core_config_lifecycle(monkeypatch, tmp_pa
     assert xray.config.inbounds_by_tag["node-1-hy2-8443"]["protocol"] == "hysteria"
 
 
+def test_apply_provisioned_config_restores_previous_file_when_restart_fails(
+    monkeypatch, tmp_path
+):
+    from app import xray
+    import app.xray.node_provisioning as provisioning
+
+    config_path = tmp_path / "xray.json"
+    previous_config = {
+        "inbounds": [
+            {
+                "tag": "previous",
+                "listen": "0.0.0.0",
+                "port": 1080,
+                "protocol": "shadowsocks",
+                "settings": {"clients": [], "network": "tcp"},
+            }
+        ],
+        "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+    }
+    config_path.write_text('{"inbounds": [], "outbounds": []}')
+    xray.config = XRayConfig(previous_config)
+
+    class Core:
+        def restart(self, startup_config):
+            raise RuntimeError("restart failed")
+
+    class Hosts:
+        def update(self):
+            raise AssertionError("hosts must not refresh after failed restart")
+
+    monkeypatch.setattr(provisioning, "XRAY_JSON", str(config_path))
+    monkeypatch.setattr(xray, "core", Core())
+    monkeypatch.setattr(xray, "hosts", Hosts())
+    monkeypatch.setattr(xray, "nodes", {})
+    monkeypatch.setattr(provisioning.XRayConfig, "include_db_users", lambda self: self)
+
+    try:
+        apply_provisioned_config(
+            {
+                "inbounds": [
+                    {
+                        "tag": "new",
+                        "listen": "0.0.0.0",
+                        "port": 8443,
+                        "protocol": "hysteria",
+                        "settings": {"version": 2, "users": []},
+                        "streamSettings": {"network": "hysteria"},
+                    }
+                ],
+                "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+            }
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected restart failure")
+
+    assert config_path.read_text() == '{"inbounds": [], "outbounds": []}'
+    assert xray.config.inbounds_by_tag["previous"]["protocol"] == "shadowsocks"
+
+
 def test_redeem_node_install_payload_returns_one_time_config_without_private_key():
     db = _db_session()
     dbnode = _db_node(db)
@@ -315,4 +409,8 @@ def test_render_node_install_script_requires_token_and_does_not_write_inbounds()
     assert "binary_url" in script
     assert "core_install_url" in script
     assert "/usr/local/bin/marzban-node" in script
+    assert "openssl req -x509" in script
+    assert "/var/lib/marzban-node/ssl_cert.pem" in script
+    assert "/var/lib/marzban-node/ssl_key.pem" in script
+    assert "chmod 0600 /var/lib/marzban-node/ssl_key.pem" in script
     assert "INBOUNDS=" not in script
