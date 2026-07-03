@@ -1,5 +1,6 @@
 import {
   Alert,
+  AlertDescription,
   AlertIcon,
   Box,
   Button,
@@ -256,9 +257,9 @@ export const UserDialog: FC<UserDialogProps> = () => {
     []
   );
 
-  const [dataLimit, userStatus] = useWatch({
+  const [dataLimit, userStatus, selectedProxies] = useWatch({
     control: form.control,
-    name: ["data_limit", "status"],
+    name: ["data_limit", "status", "selected_proxies"],
   });
 
   const usageTitle = t("userDialog.total");
@@ -723,8 +724,17 @@ export const UserDialog: FC<UserDialogProps> = () => {
                       !!form.formState.errors.selected_proxies?.message
                     }
                   >
-                    <FormLabel>{t("userDialog.protocols")}</FormLabel>
-                    <Controller
+                  <FormLabel>{t("userDialog.protocols")}</FormLabel>
+                  {Array.isArray(selectedProxies) &&
+                    selectedProxies.includes("hysteria") && (
+                      <Alert status="warning" mb={2} borderRadius="6px">
+                        <AlertIcon />
+                        <AlertDescription fontSize="xs">
+                          {t("userDialog.hysteriaRestartWarning")}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  <Controller
                       control={form.control}
                       name="selected_proxies"
                       render={({ field }) => {

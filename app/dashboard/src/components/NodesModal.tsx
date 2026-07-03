@@ -120,6 +120,49 @@ const formatPorts = (ports?: Array<number | string>) => {
   return ports.join(", ");
 };
 
+const formatSocketList = (ports?: Array<Record<string, unknown>>) => {
+  if (!ports || !ports.length) return "-";
+  return ports
+    .map((port) => {
+      const transport = String(port.transport || port.network || "tcp");
+      return `${transport}/${String(port.port || "-")}`;
+    })
+    .join(", ");
+};
+
+const formatConfiguredPorts = (ports?: Array<Record<string, unknown>>) => {
+  if (!ports || !ports.length) return "-";
+  return ports
+    .map((port) => {
+      const tag = port.tag ? `${String(port.tag)} ` : "";
+      const transport = String(port.transport || port.network || "tcp");
+      return `${tag}${transport}/${String(port.port || "-")}`;
+    })
+    .join(", ");
+};
+
+const formatBytes = (bytes?: unknown) => {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes)) return "-";
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KiB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+};
+
+const formatTimestamp = (timestamp?: number | null) => {
+  if (!timestamp) return "-";
+  return new Date(timestamp * 1000).toLocaleString();
+};
+
+const coreInstallLabel = (runtime: NonNullable<NodeType["runtime_status"]>) => {
+  const xray = runtime.installed_cores?.xray;
+  const singBox = runtime.installed_cores?.["sing-box"];
+  const label = (name: string, core: any) => {
+    if (!core) return `${name}: unknown`;
+    if (!core.installed) return `${name}: missing`;
+    return `${name}: ${core.version || "installed"}`;
+  };
+  return `${label("Xray", xray)} | ${label("sing-box", singBox)}`;
+};
+
 const NodeRuntimeSummary: FC<{ node: NodeType }> = ({ node }) => {
   const runtime = node.runtime_status;
   if (!runtime) return null;
@@ -154,6 +197,21 @@ const NodeRuntimeSummary: FC<{ node: NodeType }> = ({ node }) => {
         <Text fontSize="xs" color="gray.500">
           {runtime.core_reason}
         </Text>
+        <VStack align="stretch" spacing={1} fontSize="xs" color="gray.500">
+          <HStack justify="space-between" spacing={3}>
+            <Text>node {runtime.node_version || "-"}</Text>
+            <Text>last restart {formatTimestamp(runtime.last_core_restart_at)}</Text>
+          </HStack>
+          <Text>{coreInstallLabel(runtime)}</Text>
+          <HStack justify="space-between" spacing={3} align="start">
+            <Text>
+              memory agent {formatBytes(runtime.memory?.agent_rss_bytes)} / core{" "}
+              {formatBytes(runtime.memory?.core_rss_bytes)}
+            </Text>
+          </HStack>
+          <Text>configured {formatConfiguredPorts(runtime.configured_inbound_ports)}</Text>
+          <Text>local sockets {formatSocketList(runtime.local_listening_ports)}</Text>
+        </VStack>
         {runtime.active_inbounds_details.length > 0 && (
           <VStack align="stretch" spacing={1} pt={1}>
             {runtime.active_inbounds_details.map((inbound) => (

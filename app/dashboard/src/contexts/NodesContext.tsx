@@ -22,6 +22,12 @@ const NodeRuntimeStatusSchema = z.object({
   core_reason: z.string(),
   xray_api_available: z.boolean().nullable().optional(),
   restart_required: z.boolean().default(false),
+  node_version: z.string().nullable().optional(),
+  installed_cores: z.record(z.string(), z.any()).default({}),
+  memory: z.record(z.string(), z.any()).default({}),
+  local_listening_ports: z.array(z.record(z.string(), z.any())).default([]),
+  configured_inbound_ports: z.array(z.record(z.string(), z.any())).default([]),
+  last_core_restart_at: z.number().nullable().optional(),
 });
 
 export const NodeSchema = z.object({
