@@ -145,19 +145,26 @@ class XRayConfig(dict):
             if not inbound['protocol'] in ProxyTypes._value2member_map_:
                 continue
 
+            if inbound['protocol'] == ProxyTypes.Hysteria:
+                if inbound.get('settings', {}).get('version') != 2:
+                    continue
+                if inbound.get('streamSettings', {}).get('network') != 'hysteria':
+                    continue
+
             if inbound['tag'] in XRAY_EXCLUDE_INBOUND_TAGS:
                 continue
 
             if not inbound.get('settings'):
                 inbound['settings'] = {}
-            if not inbound['settings'].get('clients'):
-                inbound['settings']['clients'] = []
+            users_key = 'users' if inbound['protocol'] == ProxyTypes.Hysteria else 'clients'
+            if not inbound['settings'].get(users_key):
+                inbound['settings'][users_key] = []
 
             settings = {
                 "tag": inbound["tag"],
                 "protocol": inbound["protocol"],
                 "port": None,
-                "network": "tcp",
+                "network": "hysteria" if inbound["protocol"] == ProxyTypes.Hysteria else "tcp",
                 "tls": 'none',
                 "sni": [],
                 "host": [],
@@ -197,6 +204,14 @@ class XRayConfig(dict):
                     # settings['fp']
                     # settings['alpn']
                     settings['tls'] = 'tls'
+                    server_name = tls_settings.get("serverName") or tls_settings.get("server_name")
+                    if server_name:
+                        settings['sni'].append(server_name)
+                    alpn = tls_settings.get("alpn")
+                    if isinstance(alpn, list):
+                        settings['alpn'] = ",".join(alpn)
+                    elif isinstance(alpn, str):
+                        settings['alpn'] = alpn
                     for certificate in tls_settings.get('certificates', []):
 
                         if certificate.get("certificateFile", None):
@@ -400,7 +415,8 @@ class XRayConfig(dict):
                     continue
 
                 for inbound in inbounds:
-                    clients = config.get_inbound(inbound['tag'])['settings']['clients']
+                    users_key = 'users' if inbound['protocol'] == ProxyTypes.Hysteria else 'clients'
+                    clients = config.get_inbound(inbound['tag'])['settings'][users_key]
 
                     for row in rows:
                         user_id, username, settings, excluded_inbound_tags = row

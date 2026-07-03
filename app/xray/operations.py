@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app import logger, xray
 from app.db import GetDB, crud
 from app.models.node import NodeStatus
+from app.models.proxy import ProxyTypes
 from app.models.user import UserResponse
 from app.utils.concurrency import threaded_function
 from app.xray.node import XRayNode
@@ -59,8 +60,11 @@ def _alter_inbound_user(api: XRayAPI, inbound_tag: str, account: Account):
 def add_user(dbuser: "DBUser"):
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
+    needs_config_reload = False
 
     for proxy_type, inbound_tags in user.inbounds.items():
+        if proxy_type == ProxyTypes.Hysteria:
+            needs_config_reload = True
         for inbound_tag in inbound_tags:
             inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
 
@@ -89,9 +93,13 @@ def add_user(dbuser: "DBUser"):
                 if node.connected and node.started:
                     _add_user_to_inbound(node.api, inbound_tag, account)
 
+    if needs_config_reload:
+        _restart_started_nodes_for_config_reload()
+
 
 def remove_user(dbuser: "DBUser"):
     email = f"{dbuser.id}.{dbuser.username}"
+    needs_config_reload = any(proxy.type == ProxyTypes.Hysteria for proxy in dbuser.proxies)
 
     for inbound_tag in xray.config.inbounds_by_tag:
         _remove_user_from_inbound(xray.api, inbound_tag, email)
@@ -99,13 +107,19 @@ def remove_user(dbuser: "DBUser"):
             if node.connected and node.started:
                 _remove_user_from_inbound(node.api, inbound_tag, email)
 
+    if needs_config_reload:
+        _restart_started_nodes_for_config_reload()
+
 
 def update_user(dbuser: "DBUser"):
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
+    needs_config_reload = False
 
     active_inbounds = []
     for proxy_type, inbound_tags in user.inbounds.items():
+        if proxy_type == ProxyTypes.Hysteria:
+            needs_config_reload = True
         for inbound_tag in inbound_tags:
             active_inbounds.append(inbound_tag)
             inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
@@ -143,6 +157,15 @@ def update_user(dbuser: "DBUser"):
         for node in list(xray.nodes.values()):
             if node.connected and node.started:
                 _remove_user_from_inbound(node.api, inbound_tag, email)
+
+    if needs_config_reload:
+        _restart_started_nodes_for_config_reload()
+
+
+def _restart_started_nodes_for_config_reload():
+    for node_id, node in list(xray.nodes.items()):
+        if node.connected and node.started:
+            restart_node(node_id)
 
 
 def remove_node(node_id: int):

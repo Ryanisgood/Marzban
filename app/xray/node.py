@@ -76,6 +76,7 @@ class ReSTXRayNode:
 
         self._api = None
         self._started = False
+        self._xray_api_available = False
 
     def _prepare_config(self, config: XRayConfig):
         for inbound in config.get("inbounds", []):
@@ -135,7 +136,9 @@ class ReSTXRayNode:
             raise ConnectionError("Node is not connected")
 
         if not self._api:
-            if self._started is True:
+            if self._started is True and not self._xray_api_available:
+                raise ConnectionError("Node does not expose Xray API")
+            elif self._started is True:
                 self._api = XRayAPI(
                     address=self.address,
                     port=self.api_port,
@@ -173,24 +176,13 @@ class ReSTXRayNode:
         try:
             res = self.make_request("/start", timeout=10, config=json_config)
         except NodeAPIError as exc:
-            if exc.detail == 'Xray is started already':
+            if exc.detail in ('Xray is started already', 'Core is started already'):
                 return self.restart(config)
             else:
                 raise exc
 
         self._started = True
-
-        self._api = XRayAPI(
-            address=self.address,
-            port=self.api_port,
-            ssl_cert=self._node_cert.encode(),
-            ssl_target_name="Gozargah"
-        )
-
-        try:
-            grpc.channel_ready_future(self._api._channel).result(timeout=5)
-        except grpc.FutureTimeoutError:
-            raise ConnectionError('Failed to connect to node\'s API')
+        self._configure_xray_api(res)
 
         return res
 
@@ -200,6 +192,7 @@ class ReSTXRayNode:
 
         self.make_request('/stop', timeout=5)
         self._api = None
+        self._xray_api_available = False
         self._started = False
 
     def restart(self, config: XRayConfig):
@@ -212,6 +205,15 @@ class ReSTXRayNode:
         res = self.make_request("/restart", timeout=10, config=json_config)
 
         self._started = True
+        self._configure_xray_api(res)
+
+        return res
+
+    def _configure_xray_api(self, response: dict):
+        self._api = None
+        self._xray_api_available = response.get('xray_api', True)
+        if not self._xray_api_available:
+            return
 
         self._api = XRayAPI(
             address=self.address,
@@ -224,8 +226,6 @@ class ReSTXRayNode:
             grpc.channel_ready_future(self._api._channel).result(timeout=5)
         except grpc.FutureTimeoutError:
             raise ConnectionError('Failed to connect to node\'s API')
-
-        return res
 
     def _bg_fetch_logs(self):
         while self._logs_queues:

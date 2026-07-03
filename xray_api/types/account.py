@@ -5,6 +5,8 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from ..proto.common.serial.typed_message_pb2 import TypedMessage
+from ..proto.proxy.hysteria.account.config_pb2 import \
+    Account as HysteriaAccountPb2
 from ..proto.proxy.shadowsocks.config_pb2 import \
     Account as ShadowsocksAccountPb2
 from ..proto.proxy.shadowsocks.config_pb2 import \
@@ -76,3 +78,11 @@ class ShadowsocksAccount(Account):
     @property
     def message(self):
         return Message(ShadowsocksAccountPb2(password=self.password, cipher_type=self.cipher_type))
+
+
+class HysteriaAccount(Account):
+    auth: str
+
+    @property
+    def message(self):
+        return Message(HysteriaAccountPb2(auth=self.auth))

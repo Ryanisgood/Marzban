@@ -351,6 +351,25 @@ class ClashMetaConfiguration(ClashConfiguration):
 
         proxy_remark = self._remark_validation(remark)
 
+        if inbound['protocol'] == 'hysteria':
+            node = {
+                'name': proxy_remark,
+                'type': 'hysteria2',
+                'server': address,
+                'port': inbound['port'],
+                'password': settings['auth'],
+            }
+            if inbound.get('sni'):
+                node['sni'] = inbound['sni']
+            if inbound.get('alpn'):
+                node['alpn'] = inbound['alpn'].split(',')
+            if inbound.get('ais'):
+                node['skip-cert-verify'] = inbound['ais']
+
+            self.data['proxies'].append(node)
+            self.proxy_remarks.append(proxy_remark)
+            return
+
         node = self.make_node(
             name=remark,
             remark=proxy_remark,

@@ -155,6 +155,16 @@ class V2rayShareLink(str):
                 password=settings["password"],
                 method=settings["method"],
             )
+        elif inbound["protocol"] == "hysteria":
+            link = self.hysteria2(
+                remark=remark,
+                address=address,
+                port=inbound["port"],
+                auth=settings["auth"],
+                sni=inbound.get("sni", ""),
+                alpn=inbound.get("alpn", ""),
+                ais=inbound.get("ais", ""),
+            )
         else:
             return
 
@@ -482,6 +492,36 @@ class V2rayShareLink(str):
             "ss://"
             + base64.b64encode(f"{method}:{password}".encode()).decode()
             + f"@{address}:{port}#{urlparse.quote(remark)}"
+        )
+
+    @classmethod
+    def hysteria2(
+            cls,
+            remark: str,
+            address: str,
+            port: int,
+            auth: str,
+            sni: str = "",
+            alpn: str = "",
+            ais: bool = False,
+    ):
+        payload = {}
+        if sni:
+            payload["sni"] = sni
+        if alpn:
+            payload["alpn"] = alpn
+        if ais:
+            payload["insecure"] = "1"
+
+        query = urlparse.urlencode(payload)
+        if query:
+            query = f"?{query}"
+
+        return (
+            "hysteria2://"
+            + f"{urlparse.quote(auth, safe='')}@{address}:{port}"
+            + query
+            + f"#{urlparse.quote(remark)}"
         )
 
 

@@ -10,7 +10,7 @@ def get_cert_SANs(cert: bytes):
         if isinstance(extension.value, x509.SubjectAlternativeName):
             san = extension.value
             for name in san:
-                san_list.append(name.value)
+                san_list.append(str(name.value))
     return san_list
 
 
