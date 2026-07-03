@@ -1,5 +1,4 @@
 import asyncio
-import json
 import time
 
 import commentjson
@@ -12,6 +11,7 @@ from app.models.admin import Admin
 from app.models.core import CoreStats
 from app.utils import responses
 from app.xray import XRayConfig
+from app.xray.node_provisioning import apply_provisioned_config
 from config import XRAY_JSON
 
 router = APIRouter(tags=["Core"], prefix="/api", responses={401: responses._401})
@@ -113,20 +113,10 @@ def modify_core_config(
 ) -> dict:
     """Modify the core configuration and restart the core."""
     try:
-        config = XRayConfig(payload, api_port=xray.config.api_port)
+        XRayConfig(payload, api_port=xray.config.api_port)
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err))
 
-    xray.config = config
-    with open(XRAY_JSON, "w") as f:
-        f.write(json.dumps(payload, indent=4))
-
-    startup_config = xray.config.include_db_users()
-    xray.core.restart(startup_config)
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected:
-            xray.operations.restart_node(node_id, startup_config)
-
-    xray.hosts.update()
+    apply_provisioned_config(payload)
 
     return payload

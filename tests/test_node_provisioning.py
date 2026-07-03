@@ -281,6 +281,9 @@ def test_provision_node_creates_config_hosts_panel_node_and_install_command(monk
     ]
     assert all(host.address == "node.example.com" for host in hosts)
     assert [host.port for host in hosts] == [8443, 443]
+    hy2_host = hosts[0]
+    assert hy2_host.allowinsecure is True
+    assert hy2_host.alpn.value == "h3"
 
 
 def test_provision_node_does_not_apply_config_when_token_creation_fails(monkeypatch):
@@ -837,6 +840,8 @@ def test_render_node_install_script_requires_token_and_does_not_write_inbounds()
     assert '\\"consume\\":false' in script
     assert '\\"consume\\":true' in script
     assert script.index('\\"consume\\":false') < script.index('\\"consume\\":true')
+    assert "systemctl is-active --quiet marzban-node" in script
+    assert script.index("systemctl is-active --quiet marzban-node") < script.index('\\"consume\\":true')
     assert "/usr/local/bin/marzban-node" in script
     assert "openssl req -x509" in script
     assert "/var/lib/marzban-node/ssl_cert.pem" in script

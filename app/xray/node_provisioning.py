@@ -178,12 +178,15 @@ def provision_node(
         inbound_rows = []
         for inbound, inbound_spec in zip(generated_inbounds, payload.inbounds):
             inbound_row = ProxyInbound(tag=inbound["tag"])
+            is_hy2 = inbound_spec.protocol == NodeProvisionProtocol.hy2
             db.add(inbound_row)
             db.add(
                 DBProxyHost(
                     remark=f"{payload.name} ({{USERNAME}}) [{{PROTOCOL}} - {{TRANSPORT}}]",
                     address=payload.address,
                     port=inbound_spec.port,
+                    allowinsecure=True if is_hy2 else None,
+                    alpn="h3" if is_hy2 else None,
                     inbound=inbound_row,
                 )
             )
@@ -571,6 +574,20 @@ SERVICE
 
 systemctl daemon-reload
 systemctl enable --now marzban-node
+
+for attempt in $(seq 1 10); do
+  if systemctl is-active --quiet marzban-node; then
+    sleep 1
+    if systemctl is-active --quiet marzban-node; then
+      break
+    fi
+  fi
+  if [ "$attempt" -eq 10 ]; then
+    systemctl status marzban-node --no-pager >&2 || true
+    exit 1
+  fi
+  sleep 1
+done
 
 curl -fsSL -X POST "{redeem_url}" \\
   -H "Content-Type: application/json" \\
