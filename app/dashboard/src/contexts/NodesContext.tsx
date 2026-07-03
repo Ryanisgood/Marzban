@@ -57,6 +57,40 @@ export const NodeSchema = z.object({
 
 export type NodeType = z.infer<typeof NodeSchema>;
 
+export const NodeProvisionProtocolSchema = z.enum([
+  "hy2",
+  "vless-reality",
+  "shadowsocks",
+]);
+
+export const NodeProvisionSchema = z.object({
+  name: z.string().min(1),
+  address: z.string().min(1),
+  port: z.number().or(z.string().transform((v) => parseFloat(v))),
+  api_port: z.number().or(z.string().transform((v) => parseFloat(v))),
+  usage_coefficient: z.number().or(z.string().transform((v) => parseFloat(v))),
+  inbounds: z.array(
+    z.object({
+      protocol: NodeProvisionProtocolSchema,
+      port: z.number().or(z.string().transform((v) => parseFloat(v))),
+    })
+  ),
+});
+
+export type NodeProvisionType = z.infer<typeof NodeProvisionSchema>;
+
+export const NodeProvisionResponseSchema = z.object({
+  node: NodeSchema,
+  active_inbounds: z.array(z.string()),
+  core_kind: z.string(),
+  install_token: z.string(),
+  install_command: z.string(),
+});
+
+export type NodeProvisionResponseType = z.infer<
+  typeof NodeProvisionResponseSchema
+>;
+
 export const getNodeDefaultValues = (): NodeType => ({
   name: "",
   address: "",
@@ -73,6 +107,9 @@ export const FetchNodesQueryKey = "fetch-nodes-query-key";
 export type NodeStore = {
   nodes: NodeType[];
   addNode: (node: NodeType) => Promise<unknown>;
+  provisionNode: (
+    node: NodeProvisionType
+  ) => Promise<NodeProvisionResponseType>;
   fetchNodes: () => Promise<NodeType[]>;
   fetchNodesUsage: (query: FilterUsageType) => Promise<void>;
   updateNode: (node: NodeType) => Promise<unknown>;
@@ -96,6 +133,9 @@ export const useNodes = create<NodeStore>((set, get) => ({
   nodes: [],
   addNode(body) {
     return fetch("/node", { method: "POST", body });
+  },
+  provisionNode(body) {
+    return fetch("/node/provision", { method: "POST", body });
   },
   fetchNodes() {
     return fetch("/nodes");

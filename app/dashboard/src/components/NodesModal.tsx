@@ -43,6 +43,8 @@ import {
   FetchNodesQueryKey,
   getNodeDefaultValues,
   NodeSchema,
+  NodeProvisionResponseType,
+  NodeProvisionType,
   NodeType,
   useNodes,
   useNodesQuery,
@@ -403,6 +405,20 @@ type AddNodeFormType = {
   resetAccordions: () => void;
 };
 
+type ProvisionNodeFormValues = {
+  name: string;
+  address: string;
+  port: number;
+  api_port: number;
+  usage_coefficient: number;
+  hy2: boolean;
+  hy2_port: number;
+  vless_reality: boolean;
+  vless_reality_port: number;
+  shadowsocks: boolean;
+  shadowsocks_port: number;
+};
+
 const AddNodeForm: FC<AddNodeFormType> = ({
   toggleAccordion,
   resetAccordions,
@@ -410,28 +426,98 @@ const AddNodeForm: FC<AddNodeFormType> = ({
   const toast = useToast();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { addNode } = useNodes();
-  const form = useForm<NodeType>({
+  const { addNode, provisionNode } = useNodes();
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [provisionResult, setProvisionResult] =
+    useState<NodeProvisionResponseType | null>(null);
+  const provisionForm = useForm<ProvisionNodeFormValues>({
+    defaultValues: {
+      name: "",
+      address: "",
+      port: 62050,
+      api_port: 62051,
+      usage_coefficient: 1,
+      hy2: true,
+      hy2_port: 8443,
+      vless_reality: false,
+      vless_reality_port: 443,
+      shadowsocks: false,
+      shadowsocks_port: 8388,
+    },
+  });
+  const manualForm = useForm<NodeType>({
     resolver: zodResolver(NodeSchema),
     defaultValues: {
       ...getNodeDefaultValues(),
       add_as_new_host: false,
     },
   });
-  const { isLoading, mutate } = useMutation(addNode, {
+  const { isLoading: isProvisioning, mutate: provisionMutate } = useMutation(
+    provisionNode,
+    {
+      onSuccess: (result) => {
+        setProvisionResult(result);
+        generateSuccessMessage(
+          t("nodes.addNodeSuccess", { name: provisionForm.getValues("name") }),
+          toast
+        );
+        queryClient.invalidateQueries(FetchNodesQueryKey);
+      },
+      onError: (e) => {
+        generateErrorMessage(e, toast, provisionForm);
+      },
+    }
+  );
+  const { isLoading: isManualLoading, mutate: manualMutate } = useMutation(addNode, {
     onSuccess: () => {
       generateSuccessMessage(
-        t("nodes.addNodeSuccess", { name: form.getValues("name") }),
+        t("nodes.addNodeSuccess", { name: manualForm.getValues("name") }),
         toast
       );
       queryClient.invalidateQueries(FetchNodesQueryKey);
-      form.reset();
+      manualForm.reset();
       resetAccordions();
     },
     onError: (e) => {
-      generateErrorMessage(e, toast, form);
+      generateErrorMessage(e, toast, manualForm);
     },
   });
+  const submitProvision = (values: ProvisionNodeFormValues) => {
+    const inbounds: NodeProvisionType["inbounds"] = [];
+    if (values.hy2) {
+      inbounds.push({ protocol: "hy2", port: Number(values.hy2_port) });
+    }
+    if (values.vless_reality) {
+      inbounds.push({
+        protocol: "vless-reality",
+        port: Number(values.vless_reality_port),
+      });
+    }
+    if (values.shadowsocks) {
+      inbounds.push({
+        protocol: "shadowsocks",
+        port: Number(values.shadowsocks_port),
+      });
+    }
+    if (!inbounds.length) {
+      toast({
+        status: "error",
+        description: t("nodes.provisionSelectProtocol"),
+      });
+      return;
+    }
+
+    provisionMutate({
+      name: values.name,
+      address: values.address,
+      port: Number(values.port),
+      api_port: Number(values.api_port),
+      usage_coefficient: Number(values.usage_coefficient),
+      inbounds,
+    });
+  };
+  const expectedCore =
+    provisionForm.watch("hy2") ? "sing-box" : "Xray";
   return (
     <AccordionItem
       border="1px solid"
@@ -458,14 +544,144 @@ const AddNodeForm: FC<AddNodeFormType> = ({
         </Text>
       </AccordionButton>
       <AccordionPanel px={2} py={4}>
-        <NodeForm
-          form={form}
-          mutate={mutate}
-          isLoading={isLoading}
-          submitBtnText={t("nodes.addNode")}
-          btnProps={{ variant: "solid" }}
-          addAsHost
-        />
+        <VStack align="stretch" spacing={3}>
+          <form onSubmit={provisionForm.handleSubmit(submitProvision)}>
+            <VStack align="stretch" spacing={3}>
+              <HStack alignItems="flex-start" w="100%">
+                <Box w="100%">
+                  <CustomInput
+                    label={t("nodes.nodeName")}
+                    size="sm"
+                    placeholder="rn1c1g"
+                    {...provisionForm.register("name", { required: true })}
+                  />
+                </Box>
+                <Box w="100%">
+                  <CustomInput
+                    label={t("nodes.nodeAddress")}
+                    size="sm"
+                    placeholder="203.0.113.10"
+                    {...provisionForm.register("address", { required: true })}
+                  />
+                </Box>
+              </HStack>
+              <HStack alignItems="flex-start" w="100%">
+                <Box>
+                  <CustomInput
+                    label={t("nodes.nodePort")}
+                    size="sm"
+                    placeholder="62050"
+                    {...provisionForm.register("port")}
+                  />
+                </Box>
+                <Box>
+                  <CustomInput
+                    label={t("nodes.nodeAPIPort")}
+                    size="sm"
+                    placeholder="62051"
+                    {...provisionForm.register("api_port")}
+                  />
+                </Box>
+                <Box>
+                  <CustomInput
+                    label={t("nodes.usageCoefficient")}
+                    size="sm"
+                    placeholder="1"
+                    {...provisionForm.register("usage_coefficient")}
+                  />
+                </Box>
+              </HStack>
+              <FormControl py={1}>
+                <FormLabel m={0}>{t("nodes.provisionProtocols")}</FormLabel>
+                <VStack align="stretch" spacing={2} pt={2}>
+                  <HStack alignItems="center">
+                    <Checkbox {...provisionForm.register("hy2")}>HY2</Checkbox>
+                    <CustomInput
+                      label={t("nodes.publicPort")}
+                      size="sm"
+                      placeholder="8443"
+                      {...provisionForm.register("hy2_port")}
+                    />
+                  </HStack>
+                  <HStack alignItems="center">
+                    <Checkbox {...provisionForm.register("vless_reality")}>
+                      VLESS REALITY
+                    </Checkbox>
+                    <CustomInput
+                      label={t("nodes.publicPort")}
+                      size="sm"
+                      placeholder="443"
+                      {...provisionForm.register("vless_reality_port")}
+                    />
+                  </HStack>
+                  <HStack alignItems="center">
+                    <Checkbox {...provisionForm.register("shadowsocks")}>
+                      Shadowsocks
+                    </Checkbox>
+                    <CustomInput
+                      label={t("nodes.publicPort")}
+                      size="sm"
+                      placeholder="8388"
+                      {...provisionForm.register("shadowsocks_port")}
+                    />
+                  </HStack>
+                </VStack>
+              </FormControl>
+              <HStack>
+                <Badge colorScheme={expectedCore === "sing-box" ? "purple" : "blue"}>
+                  {t("nodes.expectedCore")}: {expectedCore}
+                </Badge>
+              </HStack>
+              <Button
+                type="submit"
+                colorScheme="primary"
+                size="sm"
+                isLoading={isProvisioning}
+              >
+                {t("nodes.provisionNode")}
+              </Button>
+            </VStack>
+          </form>
+          {provisionResult && (
+            <Alert status="success" alignItems="start">
+              <AlertIcon />
+              <AlertDescription w="full" overflow="hidden">
+                <Text fontSize="sm" mb={2}>
+                  {t("nodes.installCommand")}
+                </Text>
+                <Text
+                  fontSize="xs"
+                  fontFamily="mono"
+                  whiteSpace="pre-wrap"
+                  wordBreak="break-all"
+                  p={2}
+                  bg="blackAlpha.100"
+                  _dark={{ bg: "whiteAlpha.100" }}
+                  borderRadius="4px"
+                >
+                  {provisionResult.install_command}
+                </Text>
+              </AlertDescription>
+            </Alert>
+          )}
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => setShowManualForm(!showManualForm)}
+          >
+            {t("nodes.advancedManualNode")}
+          </Button>
+          <Collapse in={showManualForm} animateOpacity>
+            <NodeForm
+              form={manualForm}
+              mutate={manualMutate}
+              isLoading={isManualLoading}
+              submitBtnText={t("nodes.addNode")}
+              btnProps={{ variant: "outline" }}
+              addAsHost
+            />
+          </Collapse>
+        </VStack>
       </AccordionPanel>
     </AccordionItem>
   );
