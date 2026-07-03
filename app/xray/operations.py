@@ -5,7 +5,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app import logger, xray
 from app.db import GetDB, crud
-from app.models.node import NodeStatus
+from app.models.node import NodeInboundsMode, NodeStatus
 from app.models.proxy import ProxyTypes
 from app.models.user import UserResponse
 from app.utils.concurrency import threaded_function
@@ -27,6 +27,37 @@ def get_tls():
             "key": tls.key,
             "certificate": tls.certificate
         }
+
+
+def _node_active_inbounds(dbnode: "DBNode"):
+    return (
+        dbnode.active_inbounds
+        if dbnode.inbounds_mode == NodeInboundsMode.panel
+        else None
+    )
+
+
+def _node_runs_inbound(node, inbound_tag: str) -> bool:
+    active_inbounds = getattr(node, "active_inbounds", None)
+    return active_inbounds is None or inbound_tag in active_inbounds
+
+
+def _node_api_or_none(node):
+    if not node.connected or not node.started:
+        return None
+    try:
+        return node.api
+    except (ConnectionError, xray.exc.ConnectionError):
+        return None
+
+
+def _node_apis_for_inbound(nodes, inbound_tag: str):
+    for node in list(nodes):
+        if not _node_runs_inbound(node, inbound_tag):
+            continue
+        api = _node_api_or_none(node)
+        if api:
+            yield api
 
 
 @threaded_function
@@ -89,9 +120,8 @@ def add_user(dbuser: "DBUser"):
                 account.flow = XTLSFlows.NONE
 
             _add_user_to_inbound(xray.api, inbound_tag, account)  # main core
-            for node in list(xray.nodes.values()):
-                if node.connected and node.started:
-                    _add_user_to_inbound(node.api, inbound_tag, account)
+            for node_api in _node_apis_for_inbound(xray.nodes.values(), inbound_tag):
+                _add_user_to_inbound(node_api, inbound_tag, account)
 
     if needs_config_reload:
         _restart_started_nodes_for_config_reload()
@@ -103,9 +133,8 @@ def remove_user(dbuser: "DBUser"):
 
     for inbound_tag in xray.config.inbounds_by_tag:
         _remove_user_from_inbound(xray.api, inbound_tag, email)
-        for node in list(xray.nodes.values()):
-            if node.connected and node.started:
-                _remove_user_from_inbound(node.api, inbound_tag, email)
+        for node_api in _node_apis_for_inbound(xray.nodes.values(), inbound_tag):
+            _remove_user_from_inbound(node_api, inbound_tag, email)
 
     if needs_config_reload:
         _restart_started_nodes_for_config_reload()
@@ -114,12 +143,10 @@ def remove_user(dbuser: "DBUser"):
 def update_user(dbuser: "DBUser"):
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
-    needs_config_reload = False
+    needs_config_reload = bool(xray.config.inbounds_by_protocol.get(ProxyTypes.Hysteria))
 
     active_inbounds = []
     for proxy_type, inbound_tags in user.inbounds.items():
-        if proxy_type == ProxyTypes.Hysteria:
-            needs_config_reload = True
         for inbound_tag in inbound_tags:
             active_inbounds.append(inbound_tag)
             inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
@@ -145,18 +172,16 @@ def update_user(dbuser: "DBUser"):
                 account.flow = XTLSFlows.NONE
 
             _alter_inbound_user(xray.api, inbound_tag, account)  # main core
-            for node in list(xray.nodes.values()):
-                if node.connected and node.started:
-                    _alter_inbound_user(node.api, inbound_tag, account)
+            for node_api in _node_apis_for_inbound(xray.nodes.values(), inbound_tag):
+                _alter_inbound_user(node_api, inbound_tag, account)
 
     for inbound_tag in xray.config.inbounds_by_tag:
         if inbound_tag in active_inbounds:
             continue
         # remove disabled inbounds
         _remove_user_from_inbound(xray.api, inbound_tag, email)
-        for node in list(xray.nodes.values()):
-            if node.connected and node.started:
-                _remove_user_from_inbound(node.api, inbound_tag, email)
+        for node_api in _node_apis_for_inbound(xray.nodes.values(), inbound_tag):
+            _remove_user_from_inbound(node_api, inbound_tag, email)
 
     if needs_config_reload:
         _restart_started_nodes_for_config_reload()
@@ -190,7 +215,8 @@ def add_node(dbnode: "DBNode"):
                                      api_port=dbnode.api_port,
                                      ssl_key=tls['key'],
                                      ssl_cert=tls['certificate'],
-                                     usage_coefficient=dbnode.usage_coefficient)
+                                     usage_coefficient=dbnode.usage_coefficient,
+                                     active_inbounds=_node_active_inbounds(dbnode))
 
     return xray.nodes[dbnode.id]
 
@@ -269,6 +295,7 @@ def restart_node(node_id, config=None):
 
     try:
         node = xray.nodes[dbnode.id]
+        node.active_inbounds = _node_active_inbounds(dbnode)
     except KeyError:
         node = xray.operations.add_node(dbnode)
 

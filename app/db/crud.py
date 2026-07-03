@@ -1223,7 +1223,12 @@ def get_node_by_id(db: Session, node_id: int) -> Optional[Node]:
     Returns:
         Optional[Node]: The Node object if found, None otherwise.
     """
-    return db.query(Node).filter(Node.id == node_id).first()
+    return (
+        db.query(Node)
+        .options(joinedload(Node.active_inbound_objects))
+        .filter(Node.id == node_id)
+        .first()
+    )
 
 
 def get_nodes(db: Session,
@@ -1240,7 +1245,7 @@ def get_nodes(db: Session,
     Returns:
         List[Node]: A list of Node objects matching the criteria.
     """
-    query = db.query(Node)
+    query = db.query(Node).options(joinedload(Node.active_inbound_objects))
 
     if status:
         if isinstance(status, list):
@@ -1307,7 +1312,14 @@ def create_node(db: Session, node: NodeCreate) -> Node:
     dbnode = Node(name=node.name,
                   address=node.address,
                   port=node.port,
-                  api_port=node.api_port)
+                  api_port=node.api_port,
+                  inbounds_mode=node.inbounds_mode)
+    if node.active_inbounds:
+        dbnode.active_inbound_objects = (
+            db.query(ProxyInbound)
+            .filter(ProxyInbound.tag.in_(node.active_inbounds))
+            .all()
+        )
 
     db.add(dbnode)
     db.commit()
@@ -1354,6 +1366,16 @@ def update_node(db: Session, dbnode: Node, modify: NodeModify) -> Node:
 
     if modify.api_port is not None:
         dbnode.api_port = modify.api_port
+
+    if modify.active_inbounds is not None:
+        dbnode.active_inbound_objects = (
+            db.query(ProxyInbound)
+            .filter(ProxyInbound.tag.in_(modify.active_inbounds))
+            .all()
+        )
+
+    if modify.inbounds_mode is not None:
+        dbnode.inbounds_mode = modify.inbounds_mode
 
     if modify.status is NodeStatus.disabled:
         dbnode.status = modify.status

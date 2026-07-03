@@ -22,7 +22,7 @@ from sqlalchemy.sql.expression import select, text
 
 from app import xray
 from app.db.base import Base
-from app.models.node import NodeStatus
+from app.models.node import NodeInboundsMode, NodeStatus
 from app.models.proxy import (
     ProxyHostALPN,
     ProxyHostFingerprint,
@@ -157,6 +157,14 @@ template_inbounds_association = Table(
     Base.metadata,
     Column("user_template_id", ForeignKey("user_templates.id")),
     Column("inbound_tag", ForeignKey("inbounds.tag")),
+)
+
+node_inbounds_association = Table(
+    "node_inbounds_association",
+    Base.metadata,
+    Column("node_id", ForeignKey("nodes.id")),
+    Column("inbound_tag", ForeignKey("inbounds.tag")),
+    UniqueConstraint("node_id", "inbound_tag"),
 )
 
 
@@ -299,6 +307,12 @@ class Node(Base):
     address = Column(String(256), unique=False, nullable=False)
     port = Column(Integer, unique=False, nullable=False)
     api_port = Column(Integer, unique=False, nullable=False)
+    inbounds_mode = Column(
+        Enum(NodeInboundsMode),
+        nullable=False,
+        default=NodeInboundsMode.legacy,
+        server_default=NodeInboundsMode.legacy.value,
+    )
     xray_version = Column(String(32), nullable=True)
     status = Column(Enum(NodeStatus), nullable=False, default=NodeStatus.connecting)
     last_status_change = Column(DateTime, default=datetime.utcnow)
@@ -309,6 +323,13 @@ class Node(Base):
     user_usages = relationship("NodeUserUsage", back_populates="node", cascade="all, delete-orphan")
     usages = relationship("NodeUsage", back_populates="node", cascade="all, delete-orphan")
     usage_coefficient = Column(Float, nullable=False, server_default=text("1.0"), default=1)
+    active_inbound_objects = relationship(
+        "ProxyInbound", secondary=node_inbounds_association
+    )
+
+    @property
+    def active_inbounds(self):
+        return [inbound.tag for inbound in self.active_inbound_objects]
 
 
 class NodeUserUsage(Base):

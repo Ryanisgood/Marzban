@@ -12,6 +12,7 @@ from app.dependencies import get_dbnode, validate_dates
 from app.models.admin import Admin
 from app.models.node import (
     NodeCreate,
+    NodeInboundsMode,
     NodeModify,
     NodeResponse,
     NodeSettings,
@@ -38,6 +39,27 @@ def add_host_if_needed(new_node: NodeCreate, db: Session):
         xray.hosts.update()
 
 
+def validate_active_inbounds(active_inbounds: List[str]):
+    unknown_inbounds = [
+        inbound for inbound in active_inbounds
+        if inbound not in xray.config.inbounds_by_tag
+    ]
+    if unknown_inbounds:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown inbound tag(s): {', '.join(unknown_inbounds)}",
+        )
+
+
+def validate_inbounds_selection(inbounds_mode: NodeInboundsMode, active_inbounds: List[str]):
+    if inbounds_mode == NodeInboundsMode.panel and not active_inbounds:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one active inbound is required in panel mode",
+        )
+    validate_active_inbounds(active_inbounds)
+
+
 @router.get("/node/settings", response_model=NodeSettings)
 def get_node_settings(
     db: Session = Depends(get_db), admin: Admin = Depends(Admin.check_sudo_admin)
@@ -55,6 +77,7 @@ def add_node(
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Add a new node to the database and optionally add it as a host."""
+    validate_inbounds_selection(new_node.inbounds_mode, new_node.active_inbounds)
     try:
         dbnode = crud.create_node(db, new_node)
     except IntegrityError:
@@ -164,10 +187,33 @@ def modify_node(
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Update a node's details. Only accessible to sudo admins."""
+    connection_settings_changed = (
+        (modified_node.address is not None and modified_node.address != dbnode.address)
+        or (modified_node.port is not None and modified_node.port != dbnode.port)
+        or (modified_node.api_port is not None and modified_node.api_port != dbnode.api_port)
+        or (
+            modified_node.usage_coefficient is not None
+            and modified_node.usage_coefficient != dbnode.usage_coefficient
+        )
+    )
+    was_disabled = dbnode.status == NodeStatus.disabled
+
+    active_inbounds = (
+        modified_node.active_inbounds
+        if modified_node.active_inbounds is not None
+        else dbnode.active_inbounds
+    )
+    inbounds_mode = modified_node.inbounds_mode or dbnode.inbounds_mode
+    validate_inbounds_selection(inbounds_mode, active_inbounds)
+
     updated_node = crud.update_node(db, dbnode, modified_node)
-    xray.operations.remove_node(updated_node.id)
-    if updated_node.status != NodeStatus.disabled:
+    if updated_node.status == NodeStatus.disabled:
+        xray.operations.remove_node(updated_node.id)
+    elif connection_settings_changed or was_disabled:
+        xray.operations.remove_node(updated_node.id)
         bg.add_task(xray.operations.connect_node, node_id=updated_node.id)
+    else:
+        bg.add_task(xray.operations.restart_node, node_id=updated_node.id)
 
     logger.info(f'Node "{dbnode.name}" modified')
     return dbnode

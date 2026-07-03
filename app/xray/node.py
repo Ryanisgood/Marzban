@@ -6,6 +6,7 @@ import threading
 import time
 from collections import deque
 from contextlib import contextmanager
+from copy import deepcopy
 from typing import List
 
 import grpc
@@ -47,7 +48,8 @@ class ReSTXRayNode:
                  api_port: int,
                  ssl_key: str,
                  ssl_cert: str,
-                 usage_coefficient: float = 1):
+                 usage_coefficient: float = 1,
+                 active_inbounds: List[str] = None):
 
         self.address = address
         self.port = port
@@ -55,6 +57,7 @@ class ReSTXRayNode:
         self.ssl_key = ssl_key
         self.ssl_cert = ssl_cert
         self.usage_coefficient = usage_coefficient
+        self.active_inbounds = active_inbounds
 
         self._keyfile = string_to_temp_file(ssl_key)
         self._certfile = string_to_temp_file(ssl_cert)
@@ -77,8 +80,18 @@ class ReSTXRayNode:
         self._api = None
         self._started = False
         self._xray_api_available = False
+        self._features = []
 
     def _prepare_config(self, config: XRayConfig):
+        config = deepcopy(config)
+        if self.active_inbounds is not None:
+            active_inbounds = set(self.active_inbounds)
+            config["inbounds"] = [
+                inbound for inbound in config.get("inbounds", [])
+                if inbound.get("tag") == "API_INBOUND"
+                or inbound.get("tag") in active_inbounds
+            ]
+
         for inbound in config.get("inbounds", []):
             streamSettings = inbound.get("streamSettings") or {}
             tlsSettings = streamSettings.get("tlsSettings") or {}
@@ -164,17 +177,34 @@ class ReSTXRayNode:
 
     def get_version(self):
         res = self.make_request("/", timeout=3)
+        self._features = res.get("features") or []
         return res.get('core_version')
+
+    def _ensure_controller_inbounds_capability(self):
+        if self.active_inbounds is None:
+            return
+
+        res = self.make_request("/", timeout=3)
+        self._features = res.get("features") or []
+        self._ensure_controller_inbounds_supported(res)
 
     def start(self, config: XRayConfig):
         if not self.connected:
             self.connect()
+        self._ensure_controller_inbounds_capability()
 
         config = self._prepare_config(config)
         json_config = config.to_json()
+        params = {"config": json_config}
+        if self.active_inbounds is not None:
+            params["inbounds"] = self.active_inbounds
 
         try:
-            res = self.make_request("/start", timeout=10, config=json_config)
+            res = self.make_request(
+                "/start",
+                timeout=10,
+                **params,
+            )
         except NodeAPIError as exc:
             if exc.detail in ('Xray is started already', 'Core is started already'):
                 return self.restart(config)
@@ -182,6 +212,7 @@ class ReSTXRayNode:
                 raise exc
 
         self._started = True
+        self._ensure_controller_inbounds_supported(res)
         self._configure_xray_api(res)
 
         return res
@@ -198,19 +229,41 @@ class ReSTXRayNode:
     def restart(self, config: XRayConfig):
         if not self.connected:
             self.connect()
+        self._ensure_controller_inbounds_capability()
 
         config = self._prepare_config(config)
         json_config = config.to_json()
+        params = {"config": json_config}
+        if self.active_inbounds is not None:
+            params["inbounds"] = self.active_inbounds
 
-        res = self.make_request("/restart", timeout=10, config=json_config)
+        res = self.make_request(
+            "/restart",
+            timeout=10,
+            **params,
+        )
 
         self._started = True
+        self._ensure_controller_inbounds_supported(res)
         self._configure_xray_api(res)
 
         return res
 
+    def _ensure_controller_inbounds_supported(self, response: dict):
+        if self.active_inbounds is None:
+            return
+
+        features = response.get("features") or []
+        if "controller_inbounds" not in features:
+            raise NodeAPIError(
+                426,
+                "Node does not support controller-managed inbounds. "
+                "Upgrade marzban-node or use legacy INBOUNDS mode.",
+            )
+
     def _configure_xray_api(self, response: dict):
         self._api = None
+        self._features = response.get("features") or []
         self._xray_api_available = response.get('xray_api', True)
         if not self._xray_api_available:
             return
@@ -278,7 +331,8 @@ class RPyCXRayNode:
                  api_port: int,
                  ssl_key: str,
                  ssl_cert: str,
-                 usage_coefficient: float = 1):
+                 usage_coefficient: float = 1,
+                 active_inbounds: List[str] = None):
 
         class Service(rpyc.Service):
             def __init__(self,
@@ -313,6 +367,7 @@ class RPyCXRayNode:
         self.ssl_key = ssl_key
         self.ssl_cert = ssl_cert
         self.usage_coefficient = usage_coefficient
+        self.active_inbounds = active_inbounds
 
         self.started = False
 
@@ -382,6 +437,15 @@ class RPyCXRayNode:
         return self.remote.fetch_xray_version()
 
     def _prepare_config(self, config: XRayConfig):
+        config = deepcopy(config)
+        if self.active_inbounds is not None:
+            active_inbounds = set(self.active_inbounds)
+            config["inbounds"] = [
+                inbound for inbound in config.get("inbounds", [])
+                if inbound.get("tag") == "API_INBOUND"
+                or inbound.get("tag") in active_inbounds
+            ]
+
         for inbound in config.get("inbounds", []):
             streamSettings = inbound.get("streamSettings") or {}
             tlsSettings = streamSettings.get("tlsSettings") or {}
@@ -500,7 +564,8 @@ class XRayNode:
                 api_port: int,
                 ssl_key: str,
                 ssl_cert: str,
-                usage_coefficient: float = 1):
+                usage_coefficient: float = 1,
+                active_inbounds: List[str] = None):
 
         # trying to detect what's the server of node
         try:
@@ -517,7 +582,8 @@ class XRayNode:
                 api_port=api_port,
                 ssl_key=ssl_key,
                 ssl_cert=ssl_cert,
-                usage_coefficient=usage_coefficient
+                usage_coefficient=usage_coefficient,
+                active_inbounds=active_inbounds
             )
         except Exception:
             # if might be rpyc
@@ -527,5 +593,6 @@ class XRayNode:
                 api_port=api_port,
                 ssl_key=ssl_key,
                 ssl_cert=ssl_cert,
-                usage_coefficient=usage_coefficient
+                usage_coefficient=usage_coefficient,
+                active_inbounds=active_inbounds
             )
