@@ -4,6 +4,8 @@ Functions for managing proxy hosts, users, user templates, nodes, and administra
 
 from datetime import datetime, timedelta
 from enum import Enum
+import hashlib
+import secrets
 from typing import Dict, List, Optional, Tuple, Union
 
 from sqlalchemy import and_, delete, func, or_
@@ -17,6 +19,7 @@ from app.db.models import (
     AdminUsageLogs,
     NextPlan,
     Node,
+    NodeProvisionToken,
     NodeUsage,
     NodeUserUsage,
     NotificationReminder,
@@ -1325,6 +1328,58 @@ def create_node(db: Session, node: NodeCreate) -> Node:
     db.commit()
     db.refresh(dbnode)
     return dbnode
+
+
+def _hash_node_provision_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_node_provision_token(
+    db: Session,
+    *,
+    node_id: int,
+    created_by: str,
+    active_inbounds: List[str],
+    core_kind: str,
+    expires_at: datetime,
+) -> Tuple[str, NodeProvisionToken]:
+    token = secrets.token_urlsafe(32)
+    record = NodeProvisionToken(
+        node_id=node_id,
+        token_hash=_hash_node_provision_token(token),
+        created_by=created_by,
+        expires_at=expires_at,
+        active_inbounds_json=list(active_inbounds),
+        core_kind=core_kind,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return token, record
+
+
+def redeem_node_provision_token(
+    db: Session,
+    token: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Optional[NodeProvisionToken]:
+    now = now or datetime.utcnow()
+    record = (
+        db.query(NodeProvisionToken)
+        .filter(NodeProvisionToken.token_hash == _hash_node_provision_token(token))
+        .filter(NodeProvisionToken.redeemed_at.is_(None))
+        .filter(NodeProvisionToken.revoked_at.is_(None))
+        .filter(NodeProvisionToken.expires_at > now)
+        .first()
+    )
+    if not record:
+        return None
+
+    record.redeemed_at = now
+    db.commit()
+    db.refresh(record)
+    return record
 
 
 def remove_node(db: Session, dbnode: Node) -> Node:

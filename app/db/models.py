@@ -332,6 +332,26 @@ class Node(Base):
         return [inbound.tag for inbound in self.active_inbound_objects]
 
 
+class NodeProvisionToken(Base):
+    __tablename__ = "node_provision_tokens"
+
+    id = Column(Integer, primary_key=True)
+    node_id = Column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    created_by = Column(String(34), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    redeemed_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    active_inbounds_json = Column(JSON, nullable=False, default=list)
+    core_kind = Column(String(16), nullable=False)
+    node = relationship("Node")
+
+    @property
+    def active_inbounds(self):
+        return self.active_inbounds_json or []
+
+
 class NodeUserUsage(Base):
     __tablename__ = "node_user_usages"
     __table_args__ = (
