@@ -168,6 +168,7 @@
   "userDialog.revokeSubscription": "撤销订阅",
   "userDialog.selectOneProtocol": "请至少选择一个协议",
   "userDialog.shadowsocksDesc": "快速且安全, 但效率不如其它",
+  "userDialog.hysteriaDesc": "基于 UDP 的高速 Hysteria2",
   "userDialog.startDate": "开始日期",
   "userDialog.total": "总共：",
   "userDialog.trojanDesc": "轻量、安全且非常快",

@@ -168,6 +168,7 @@
   "userDialog.revokeSubscription": "Revoke Subscription",
   "userDialog.selectOneProtocol": "Please select at least one protocol",
   "userDialog.shadowsocksDesc": "Fast and secure, but not efficient as others",
+  "userDialog.hysteriaDesc": "Fast UDP-based Hysteria2",
   "userDialog.startDate": "Start date",
   "userDialog.total": "Total: ",
   "userDialog.trojanDesc": "Lightweight, secure and lightening fast",
