@@ -3,6 +3,7 @@ import time
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, WebSocket
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.exc import IntegrityError
 from starlette.websockets import WebSocketDisconnect
 
@@ -19,10 +20,20 @@ from app.models.node import (
     NodeStatus,
     NodesUsageResponse,
 )
-from app.models.node_provision import NodeProvisionCreate, NodeProvisionResponse
+from app.models.node_provision import (
+    NodeInstallPayload,
+    NodeProvisionCreate,
+    NodeProvisionRedeemRequest,
+    NodeProvisionResponse,
+)
 from app.models.proxy import ProxyHost
 from app.utils import responses
-from app.xray.node_provisioning import apply_provisioned_config, provision_node
+from app.xray.node_provisioning import (
+    apply_provisioned_config,
+    provision_node,
+    redeem_node_install_payload,
+    render_node_install_script,
+)
 from app.xray.node_status import build_node_runtime_status, get_inbound_user_counts
 
 router = APIRouter(
@@ -302,6 +313,27 @@ def provision_new_node(
         install_token=result.install_token,
         install_command=result.install_command,
     )
+
+
+@router.get("/node/install.sh", response_class=PlainTextResponse)
+def get_node_install_script(request: Request):
+    """Return the public node installer shell script."""
+    return PlainTextResponse(
+        render_node_install_script(str(request.base_url).rstrip("/")),
+        media_type="text/x-shellscript",
+    )
+
+
+@router.post("/node/provision/redeem", response_model=NodeInstallPayload)
+def redeem_node_provision(
+    payload: NodeProvisionRedeemRequest,
+    db: Session = Depends(get_db),
+):
+    """Redeem a one-time provisioning token for node install settings."""
+    result = redeem_node_install_payload(db, payload.token)
+    if not result:
+        raise HTTPException(status_code=403, detail="Invalid or expired install token")
+    return result
 
 
 @router.get("/node/{node_id}", response_model=NodeResponse)

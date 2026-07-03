@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List
+from typing import Dict, List
 
 from pydantic import BaseModel, Field
 
@@ -32,3 +32,18 @@ class NodeProvisionResponse(BaseModel):
     core_kind: str
     install_token: str
     install_command: str
+
+
+class NodeProvisionRedeemRequest(BaseModel):
+    token: str
+
+
+class NodeInstallPayload(BaseModel):
+    node_id: int
+    node_name: str
+    service_port: int
+    api_port: int
+    active_inbounds: List[str]
+    core_kind: str
+    ssl_client_cert: str
+    env: Dict[str, str]

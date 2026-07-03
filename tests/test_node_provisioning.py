@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.db.models import Node as DBNode
+from app.db.models import Node as DBNode, TLS
 from app.db.models import ProxyHost
 from app.db.crud import create_node_provision_token, redeem_node_provision_token
 from app.models.node import NodeInboundsMode
@@ -15,12 +15,14 @@ from app.models.node_provision import NodeProvisionCreate, NodeProvisionInbound
 from app.models.node_provision import NodeProvisionProtocol
 from app.xray.config import XRayConfig
 from app.xray.node_provisioning import (
+    apply_provisioned_config,
     build_generated_inbounds,
     choose_core_kind,
     hash_install_token,
-    verify_install_token,
     provision_node,
-    apply_provisioned_config,
+    redeem_node_install_payload,
+    render_node_install_script,
+    verify_install_token,
 )
 
 
@@ -270,3 +272,37 @@ def test_apply_provisioned_config_uses_core_config_lifecycle(monkeypatch, tmp_pa
     assert node_restarts[0][0] == 7
     assert host_updates == [True]
     assert xray.config.inbounds_by_tag["node-1-hy2-8443"]["protocol"] == "hysteria"
+
+
+def test_redeem_node_install_payload_returns_one_time_config_without_private_key():
+    db = _db_session()
+    dbnode = _db_node(db)
+    db.add(TLS(key="controller-private-key", certificate="controller-public-cert"))
+    db.commit()
+    token, _ = create_node_provision_token(
+        db,
+        node_id=dbnode.id,
+        created_by="admin",
+        active_inbounds=["node-1-hy2-8443"],
+        core_kind="sing-box",
+        expires_at=datetime.utcnow() + timedelta(minutes=10),
+    )
+
+    payload = redeem_node_install_payload(db, token)
+
+    assert payload is not None
+    assert payload.node_id == dbnode.id
+    assert payload.core_kind == "sing-box"
+    assert payload.active_inbounds == ["node-1-hy2-8443"]
+    assert payload.ssl_client_cert == "controller-public-cert"
+    assert "INBOUNDS" not in payload.env
+    assert "controller-private-key" not in payload.model_dump_json()
+    assert redeem_node_install_payload(db, token) is None
+
+
+def test_render_node_install_script_requires_token_and_does_not_write_inbounds():
+    script = render_node_install_script("https://panel.example.com")
+
+    assert "--token" in script
+    assert "https://panel.example.com/api/node/provision/redeem" in script
+    assert "INBOUNDS=" not in script

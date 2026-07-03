@@ -12,7 +12,11 @@ from app import xray
 from app.db import crud
 from app.db.models import Node as DBNode, ProxyHost as DBProxyHost, ProxyInbound
 from app.models.node import NodeInboundsMode
-from app.models.node_provision import NodeProvisionCreate, NodeProvisionProtocol
+from app.models.node_provision import (
+    NodeInstallPayload,
+    NodeProvisionCreate,
+    NodeProvisionProtocol,
+)
 from app.xray.config import XRayConfig
 from config import XRAY_JSON
 
@@ -186,3 +190,100 @@ def apply_provisioned_config(payload: dict) -> None:
             xray.operations.restart_node(node_id, startup_config)
 
     xray.hosts.update()
+
+
+def redeem_node_install_payload(
+    db: Session,
+    token: str,
+) -> NodeInstallPayload | None:
+    record = crud.redeem_node_provision_token(db, token)
+    if not record:
+        return None
+
+    tls = crud.get_tls_certificate(db)
+    node = record.node
+    env = {
+        "SERVICE_HOST": "0.0.0.0",
+        "SERVICE_PORT": str(node.port),
+        "XRAY_API_HOST": "0.0.0.0",
+        "XRAY_API_PORT": str(node.api_port),
+        "XRAY_EXECUTABLE_PATH": "/usr/local/bin/xray",
+        "XRAY_ASSETS_PATH": "/usr/local/share/xray",
+        "SING_BOX_EXECUTABLE_PATH": "/usr/local/bin/sing-box",
+        "SSL_CERT_FILE": "/var/lib/marzban-node/ssl_cert.pem",
+        "SSL_KEY_FILE": "/var/lib/marzban-node/ssl_key.pem",
+        "SSL_CLIENT_CERT_FILE": "/var/lib/marzban-node/ssl_client_cert.pem",
+    }
+    return NodeInstallPayload(
+        node_id=node.id,
+        node_name=node.name,
+        service_port=node.port,
+        api_port=node.api_port,
+        active_inbounds=record.active_inbounds,
+        core_kind=record.core_kind,
+        ssl_client_cert=tls.certificate,
+        env=env,
+    )
+
+
+def render_node_install_script(controller_url: str) -> str:
+    redeem_url = f"{controller_url.rstrip('/')}/api/node/provision/redeem"
+    return f"""#!/usr/bin/env bash
+set -euo pipefail
+
+TOKEN=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --token)
+      TOKEN="${{2:-}}"
+      shift 2
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ -z "$TOKEN" ]; then
+  echo "--token is required" >&2
+  exit 2
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "run as root" >&2
+  exit 2
+fi
+
+PAYLOAD="$(curl -fsSL -X POST "{redeem_url}" \\
+  -H "Content-Type: application/json" \\
+  --data "{{\\"token\\":\\"$TOKEN\\"}}")"
+
+install -d -m 0755 /var/lib/marzban-node
+printf '%s' "$PAYLOAD" | python3 -c 'import json,sys; print(json.load(sys.stdin)["ssl_client_cert"])' > /var/lib/marzban-node/ssl_client_cert.pem
+
+python3 - "$PAYLOAD" >/etc/marzban-node.env <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+for key, value in payload["env"].items():
+    print(f"{{key}}={{value}}")
+PY
+
+cat >/etc/systemd/system/marzban-node.service <<'SERVICE'
+[Unit]
+Description=Marzban Node Rust Service
+After=network.target nss-lookup.target
+
+[Service]
+ExecStart=/usr/local/bin/marzban-node
+Restart=on-failure
+EnvironmentFile=-/etc/marzban-node.env
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable --now marzban-node
+"""
