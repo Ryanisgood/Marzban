@@ -450,9 +450,9 @@ const RadioCard: FC<
           )}
           {title === "hysteria" && isSelected && (
             <VStack alignItems="flex-start" w="full">
-              <FormControl height="66px">
+              <FormControl minH="86px">
                 <Text fontSize="sm" pb={1}>
-                  Auth
+                  {t("userDialog.hysteriaAuth")}
                 </Text>
                 <Input
                   fontSize="xs"
@@ -463,6 +463,9 @@ const RadioCard: FC<
                   placeholder={t("userDialog.generatedByDefault")}
                   {...form.register("proxies.hysteria.auth")}
                 />
+                <Text fontSize="xs" color="gray.500" pt={1}>
+                  {t("userDialog.hysteriaAuthDesc")}
+                </Text>
               </FormControl>
             </VStack>
           )}

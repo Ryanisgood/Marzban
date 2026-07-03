@@ -168,7 +168,7 @@
   "userDialog.revokeSubscription": "Revoke Subscription",
   "userDialog.selectOneProtocol": "Please select at least one protocol",
   "userDialog.shadowsocksDesc": "Fast and secure, but not efficient as others",
-  "userDialog.hysteriaDesc": "Fast UDP-based Hysteria2",
+  "userDialog.hysteriaDesc": "UDP-based Hysteria2 proxy",
   "userDialog.startDate": "Start date",
   "userDialog.total": "Total: ",
   "userDialog.trojanDesc": "Lightweight, secure and lightening fast",
@@ -189,5 +189,7 @@
   "usersTable.noUser": "There is no user added to the system",
   "usersTable.noUserMatched": "It seems there is no user matched with what you are looking for",
   "usersTable.status": "status",
-  "usersTable.total": "Total"
+  "usersTable.total": "Total",
+  "userDialog.hysteriaAuth": "Authentication password",
+  "userDialog.hysteriaAuthDesc": "Leave empty to generate automatically."
 }

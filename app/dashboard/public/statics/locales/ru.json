@@ -168,7 +168,7 @@
   "userDialog.revokeSubscription": "Отозвать подписку",
   "userDialog.selectOneProtocol": "Пожалуйста, выберите хотя бы один протокол",
   "userDialog.shadowsocksDesc": "Быстрый и безопасный, но не такой эффективный, как другие",
-  "userDialog.hysteriaDesc": "Быстрый Hysteria2 на UDP",
+  "userDialog.hysteriaDesc": "Прокси Hysteria2 на UDP",
   "userDialog.startDate": "Дата начала",
   "userDialog.total": "Всего: ",
   "userDialog.trojanDesc": "Легковесный, безопасный и быстрый",
@@ -189,5 +189,7 @@
   "usersTable.noUser": "В системе нет созданных пользователей",
   "usersTable.noUserMatched": "Похоже, нет пользователя, соответствующего вашему запросу",
   "usersTable.status": "Статус",
-  "usersTable.total": "Всего"
+  "usersTable.total": "Всего",
+  "userDialog.hysteriaAuth": "Пароль аутентификации",
+  "userDialog.hysteriaAuthDesc": "Оставьте пустым для автоматической генерации."
 }
