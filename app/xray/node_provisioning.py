@@ -137,19 +137,20 @@ def provision_node(
     controller_url: str,
     current_config: dict,
     apply_config: Callable[[dict], None],
+    current_config_provider: Callable[[], dict] | None = None,
     binary_url: str = MARZBAN_NODE_BINARY_URL,
     xray_install_url: str = XRAY_INSTALL_SCRIPT_URL,
     sing_box_install_url: str = SING_BOX_INSTALL_SCRIPT_URL,
 ) -> ProvisionNodeResult:
     specs = [(inbound.protocol, inbound.port) for inbound in payload.inbounds]
     core_kind = choose_core_kind([inbound.protocol for inbound in payload.inbounds])
+    current_config_provider = current_config_provider or (lambda: current_config)
     validate_install_sources(
         core_kind,
         binary_url=binary_url,
         xray_install_url=xray_install_url,
         sing_box_install_url=sing_box_install_url,
     )
-    validate_requested_port_conflicts(current_config, specs)
 
     dbnode = DBNode(
         name=payload.name,
@@ -162,49 +163,52 @@ def provision_node(
     db.add(dbnode)
     db.flush()
 
-    generated_inbounds = build_generated_inbounds(dbnode.id, specs)
-    validate_generated_inbound_conflicts(current_config, generated_inbounds)
-    active_tags = [inbound["tag"] for inbound in generated_inbounds]
+    with _config_apply_lock:
+        current_config = current_config_provider()
+        validate_requested_port_conflicts(payload, core_kind, current_config, specs)
+        generated_inbounds = build_generated_inbounds(dbnode.id, specs)
+        validate_generated_inbound_conflicts(current_config, generated_inbounds)
+        active_tags = [inbound["tag"] for inbound in generated_inbounds]
 
-    candidate_config = deepcopy(current_config)
-    candidate_config.setdefault("inbounds", [])
-    candidate_config["inbounds"].extend(generated_inbounds)
-    XRayConfig(candidate_config)
+        candidate_config = deepcopy(current_config)
+        candidate_config.setdefault("inbounds", [])
+        candidate_config["inbounds"].extend(generated_inbounds)
+        XRayConfig(candidate_config)
 
-    inbound_rows = []
-    for inbound, inbound_spec in zip(generated_inbounds, payload.inbounds):
-        inbound_row = ProxyInbound(tag=inbound["tag"])
-        db.add(inbound_row)
-        db.add(
-            DBProxyHost(
-                remark=f"{payload.name} ({{USERNAME}}) [{{PROTOCOL}} - {{TRANSPORT}}]",
-                address=payload.address,
-                port=inbound_spec.port,
-                inbound=inbound_row,
+        inbound_rows = []
+        for inbound, inbound_spec in zip(generated_inbounds, payload.inbounds):
+            inbound_row = ProxyInbound(tag=inbound["tag"])
+            db.add(inbound_row)
+            db.add(
+                DBProxyHost(
+                    remark=f"{payload.name} ({{USERNAME}}) [{{PROTOCOL}} - {{TRANSPORT}}]",
+                    address=payload.address,
+                    port=inbound_spec.port,
+                    inbound=inbound_row,
+                )
             )
-        )
-        inbound_rows.append(inbound_row)
+            inbound_rows.append(inbound_row)
 
-    dbnode.active_inbound_objects = inbound_rows
-    install_token, _ = crud.create_node_provision_token(
-        db,
-        node_id=dbnode.id,
-        created_by=admin_username,
-        active_inbounds=active_tags,
-        core_kind=core_kind,
-        expires_at=datetime.utcnow() + timedelta(minutes=30),
-        commit=False,
-    )
-    applied_config = False
-    try:
-        apply_config(candidate_config)
-        applied_config = True
-        db.commit()
-    except Exception:
-        db.rollback()
-        if applied_config:
-            apply_config(current_config)
-        raise
+        dbnode.active_inbound_objects = inbound_rows
+        install_token, _ = crud.create_node_provision_token(
+            db,
+            node_id=dbnode.id,
+            created_by=admin_username,
+            active_inbounds=active_tags,
+            core_kind=core_kind,
+            expires_at=datetime.utcnow() + timedelta(minutes=30),
+            commit=False,
+        )
+        applied_config = False
+        try:
+            apply_config(candidate_config)
+            applied_config = True
+            db.commit()
+        except Exception:
+            db.rollback()
+            if applied_config:
+                apply_config(current_config)
+            raise
 
     install_command = (
         f"curl -fsSL {controller_url.rstrip('/')}/api/node/install.sh "
@@ -270,7 +274,10 @@ def validate_generated_inbound_conflicts(
 
 
 def validate_requested_port_conflicts(
-    current_config: dict, specs: Sequence[ProtocolPort]
+    payload: NodeProvisionCreate,
+    core_kind: str,
+    current_config: dict,
+    specs: Sequence[ProtocolPort],
 ) -> None:
     occupied = {}
     for inbound in current_config.get("inbounds", []):
@@ -280,15 +287,25 @@ def validate_requested_port_conflicts(
 
     generated_seen = {}
     for protocol, port in specs:
-        endpoint = ("0.0.0.0", port, _protocol_transport(protocol))
-        label = f"{protocol.value}:{port}"
-        if endpoint in generated_seen:
+        if port == payload.port:
             raise ValueError(
-                f"Generated inbound port conflict: {label} conflicts with {generated_seen[endpoint]}"
+                f"Generated inbound service port conflict: {protocol.value}:{port} conflicts with node service port"
             )
-        if endpoint in occupied:
+        if core_kind == "xray" and port == payload.api_port:
             raise ValueError(
-                f"Generated inbound port conflict: {label} conflicts with {occupied[endpoint]}"
+                f"Generated inbound api port conflict: {protocol.value}:{port} conflicts with Xray API port"
+            )
+        endpoint = (_normalize_bind("0.0.0.0"), port, _protocol_transport(protocol))
+        label = f"{protocol.value}:{port}"
+        seen_conflict = _find_endpoint_conflict(endpoint, generated_seen)
+        occupied_conflict = _find_endpoint_conflict(endpoint, occupied)
+        if seen_conflict:
+            raise ValueError(
+                f"Generated inbound port conflict: {label} conflicts with {seen_conflict}"
+            )
+        if occupied_conflict:
+            raise ValueError(
+                f"Generated inbound port conflict: {label} conflicts with {occupied_conflict}"
             )
         generated_seen[endpoint] = label
 
@@ -303,11 +320,36 @@ def _inbound_endpoint(inbound: dict) -> tuple[str, int, str] | None:
         return None
 
     listen = inbound.get("listen") or "0.0.0.0"
-    return listen, normalized_port, _inbound_transport(inbound)
+    return _normalize_bind(listen), normalized_port, _inbound_transport(inbound)
 
 
 def _protocol_transport(protocol: NodeProvisionProtocol) -> str:
     return "udp" if protocol == NodeProvisionProtocol.hy2 else "tcp"
+
+
+def _find_endpoint_conflict(
+    endpoint: tuple[str, int, str], endpoints: dict[tuple[str, int, str], str]
+) -> str | None:
+    bind, port, transport = endpoint
+    for existing_endpoint, label in endpoints.items():
+        existing_bind, existing_port, existing_transport = existing_endpoint
+        if (
+            existing_port == port
+            and existing_transport == transport
+            and _binds_conflict(existing_bind, bind)
+        ):
+            return label
+    return None
+
+
+def _normalize_bind(bind: str) -> str:
+    return "" if bind in {"0.0.0.0", "::", ""} else bind
+
+
+def _binds_conflict(left: str, right: str) -> bool:
+    left = _normalize_bind(left)
+    right = _normalize_bind(right)
+    return left == right or left == "" or right == ""
 
 
 def _inbound_transport(inbound: dict) -> str:
@@ -322,8 +364,7 @@ def _inbound_transport(inbound: dict) -> str:
 
 
 def apply_provisioned_config(payload: dict) -> None:
-    with _config_apply_lock:
-        _apply_provisioned_config(payload)
+    _apply_provisioned_config(payload)
 
 
 def _apply_provisioned_config(payload: dict) -> None:
@@ -394,8 +435,9 @@ def redeem_node_install_payload(
     binary_url: str = MARZBAN_NODE_BINARY_URL,
     xray_install_url: str = XRAY_INSTALL_SCRIPT_URL,
     sing_box_install_url: str = SING_BOX_INSTALL_SCRIPT_URL,
+    consume: bool = True,
 ) -> NodeInstallPayload | None:
-    record = crud.redeem_node_provision_token(db, token)
+    record = crud.redeem_node_provision_token(db, token) if consume else crud.get_node_provision_token(db, token)
     if not record:
         return None
 
@@ -460,7 +502,7 @@ fi
 
 PAYLOAD="$(curl -fsSL -X POST "{redeem_url}" \\
   -H "Content-Type: application/json" \\
-  --data "{{\\"token\\":\\"$TOKEN\\"}}")"
+  --data "{{\\"token\\":\\"$TOKEN\\",\\"consume\\":false}}")"
 
 BINARY_URL="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("binary_url", ""))' "$PAYLOAD")"
 CORE_KIND="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("core_kind", ""))' "$PAYLOAD")"
@@ -529,4 +571,8 @@ SERVICE
 
 systemctl daemon-reload
 systemctl enable --now marzban-node
+
+curl -fsSL -X POST "{redeem_url}" \\
+  -H "Content-Type: application/json" \\
+  --data "{{\\"token\\":\\"$TOKEN\\",\\"consume\\":true}}" >/dev/null
 """

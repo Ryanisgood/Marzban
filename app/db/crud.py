@@ -1391,6 +1391,23 @@ def redeem_node_provision_token(
     return record
 
 
+def get_node_provision_token(
+    db: Session,
+    token: str,
+    *,
+    now: Optional[datetime] = None,
+) -> Optional[NodeProvisionToken]:
+    now = now or datetime.utcnow()
+    return (
+        db.query(NodeProvisionToken)
+        .filter(NodeProvisionToken.token_hash == _hash_node_provision_token(token))
+        .filter(NodeProvisionToken.redeemed_at.is_(None))
+        .filter(NodeProvisionToken.revoked_at.is_(None))
+        .filter(NodeProvisionToken.expires_at > now)
+        .first()
+    )
+
+
 def remove_node(db: Session, dbnode: Node) -> Node:
     """
     Removes a node from the database.

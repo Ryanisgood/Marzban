@@ -293,6 +293,7 @@ def provision_new_node(
             admin_username=admin.username,
             controller_url=str(request.base_url).rstrip("/"),
             current_config=xray.config.copy(),
+            current_config_provider=lambda: xray.config.copy(),
             apply_config=apply_provisioned_config,
         )
     except IntegrityError:
@@ -330,7 +331,7 @@ def redeem_node_provision(
     db: Session = Depends(get_db),
 ):
     """Redeem a one-time provisioning token for node install settings."""
-    result = redeem_node_install_payload(db, payload.token)
+    result = redeem_node_install_payload(db, payload.token, consume=payload.consume)
     if not result:
         raise HTTPException(status_code=403, detail="Invalid or expired install token")
     return result

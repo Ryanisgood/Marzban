@@ -490,6 +490,156 @@ def test_provision_node_requires_sing_box_install_url_for_hy2():
         raise AssertionError("expected missing sing-box install URL to fail")
 
 
+def test_provision_node_rejects_service_port_conflict():
+    db = _db_session()
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        port=8443,
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.hy2, port=8443),
+        ],
+    )
+
+    try:
+        provision_node(
+            db,
+            payload,
+            admin_username="admin",
+            controller_url="https://panel.example.com",
+            current_config={"inbounds": [], "outbounds": []},
+            apply_config=lambda config: None,
+            binary_url="https://panel.example.com/download/marzban-node",
+            sing_box_install_url="https://panel.example.com/download/install-sing-box.sh",
+        )
+    except ValueError as exc:
+        assert "service port" in str(exc)
+    else:
+        raise AssertionError("expected service port conflict")
+
+
+def test_provision_node_rejects_api_port_conflict_for_xray_core():
+    db = _db_session()
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        api_port=443,
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.shadowsocks, port=443),
+        ],
+    )
+
+    try:
+        provision_node(
+            db,
+            payload,
+            admin_username="admin",
+            controller_url="https://panel.example.com",
+            current_config={"inbounds": [], "outbounds": []},
+            apply_config=lambda config: None,
+            binary_url="https://panel.example.com/download/marzban-node",
+        )
+    except ValueError as exc:
+        assert "api port" in str(exc)
+    else:
+        raise AssertionError("expected api port conflict")
+
+
+def test_provision_node_rejects_wildcard_bind_conflict(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
+    db = _db_session()
+    monkeypatch.setattr(
+        provisioning,
+        "generate_reality_key_pair",
+        lambda: ("real-private-key", "real-public-key"),
+    )
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.vless_reality, port=443),
+        ],
+    )
+    current_config = {
+        "inbounds": [
+            {
+                "tag": "existing-ss",
+                "listen": "::",
+                "port": 443,
+                "protocol": "shadowsocks",
+                "settings": {"clients": [], "network": "tcp"},
+            }
+        ],
+        "outbounds": [],
+    }
+
+    try:
+        provision_node(
+            db,
+            payload,
+            admin_username="admin",
+            controller_url="https://panel.example.com",
+            current_config=current_config,
+            apply_config=lambda config: None,
+            binary_url="https://panel.example.com/download/marzban-node",
+        )
+    except ValueError as exc:
+        assert "port conflict" in str(exc)
+    else:
+        raise AssertionError("expected wildcard bind conflict")
+
+
+def test_provision_node_uses_latest_config_inside_apply_lock(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
+    db = _db_session()
+    configs = [
+        {
+            "inbounds": [
+                {
+                    "tag": "node-99-hy2-8443",
+                    "listen": "0.0.0.0",
+                    "port": 8443,
+                    "protocol": "hysteria",
+                    "settings": {"version": 2, "users": []},
+                    "streamSettings": {"network": "hysteria"},
+                }
+            ],
+            "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+        }
+    ]
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.hy2, port=9443),
+        ],
+    )
+
+    def current_config_provider():
+        return configs[-1]
+
+    def apply_config(config):
+        configs.append(config)
+
+    provision_node(
+        db,
+        payload,
+        admin_username="admin",
+        controller_url="https://panel.example.com",
+        current_config={"inbounds": [], "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}]},
+        current_config_provider=current_config_provider,
+        apply_config=apply_config,
+        binary_url="https://panel.example.com/download/marzban-node",
+        sing_box_install_url="https://panel.example.com/download/install-sing-box.sh",
+    )
+
+    applied_tags = [item["tag"] for item in configs[-1]["inbounds"]]
+    assert "node-99-hy2-8443" in applied_tags
+    assert "node-1-hy2-9443" in applied_tags
+
+
 def test_node_provision_token_node_fk_cascades_on_delete():
     foreign_key = next(iter(NodeProvisionToken.__table__.c.node_id.foreign_keys))
 
@@ -547,53 +697,6 @@ def test_apply_provisioned_config_uses_core_config_lifecycle(monkeypatch, tmp_pa
     assert node_restarts[0][0] == 7
     assert host_updates == [True]
     assert xray.config.inbounds_by_tag["node-1-hy2-8443"]["protocol"] == "hysteria"
-
-
-def test_apply_provisioned_config_uses_config_apply_lock(monkeypatch, tmp_path):
-    from app import xray
-    import app.xray.node_provisioning as provisioning
-
-    config_path = tmp_path / "xray.json"
-    events = []
-    candidate_config = {
-        "inbounds": [
-            {
-                "tag": "node-1-hy2-8443",
-                "listen": "0.0.0.0",
-                "port": 8443,
-                "protocol": "hysteria",
-                "settings": {"version": 2, "users": []},
-                "streamSettings": {"network": "hysteria"},
-            }
-        ],
-        "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
-    }
-
-    class Lock:
-        def __enter__(self):
-            events.append("enter")
-
-        def __exit__(self, exc_type, exc, traceback):
-            events.append("exit")
-
-    class Core:
-        def restart(self, startup_config):
-            events.append("restart")
-
-    class Hosts:
-        def update(self):
-            events.append("hosts")
-
-    monkeypatch.setattr(provisioning, "XRAY_JSON", str(config_path))
-    monkeypatch.setattr(provisioning, "_config_apply_lock", Lock())
-    monkeypatch.setattr(xray, "core", Core())
-    monkeypatch.setattr(xray, "hosts", Hosts())
-    monkeypatch.setattr(xray, "nodes", {})
-    monkeypatch.setattr(provisioning.XRayConfig, "include_db_users", lambda self: self)
-
-    apply_provisioned_config(candidate_config)
-
-    assert events == ["enter", "restart", "hosts", "exit"]
 
 
 def test_apply_provisioned_config_restores_previous_file_when_restart_fails(
@@ -690,6 +793,40 @@ def test_redeem_node_install_payload_returns_one_time_config_without_private_key
     assert redeem_node_install_payload(db, token) is None
 
 
+def test_redeem_node_install_payload_can_peek_before_consuming_token():
+    db = _db_session()
+    dbnode = _db_node(db)
+    db.add(TLS(key="controller-private-key", certificate="controller-public-cert"))
+    db.commit()
+    token, _ = create_node_provision_token(
+        db,
+        node_id=dbnode.id,
+        created_by="admin",
+        active_inbounds=["node-1-hy2-8443"],
+        core_kind="sing-box",
+        expires_at=datetime.utcnow() + timedelta(minutes=10),
+    )
+
+    peeked = redeem_node_install_payload(
+        db,
+        token,
+        consume=False,
+        binary_url="https://panel.example.com/download/marzban-node",
+        sing_box_install_url="https://panel.example.com/download/install-sing-box.sh",
+    )
+    consumed = redeem_node_install_payload(
+        db,
+        token,
+        consume=True,
+        binary_url="https://panel.example.com/download/marzban-node",
+        sing_box_install_url="https://panel.example.com/download/install-sing-box.sh",
+    )
+
+    assert peeked is not None
+    assert consumed is not None
+    assert redeem_node_install_payload(db, token, consume=True) is None
+
+
 def test_render_node_install_script_requires_token_and_does_not_write_inbounds():
     script = render_node_install_script("https://panel.example.com")
 
@@ -697,6 +834,9 @@ def test_render_node_install_script_requires_token_and_does_not_write_inbounds()
     assert "https://panel.example.com/api/node/provision/redeem" in script
     assert "binary_url" in script
     assert "core_install_url" in script
+    assert '\\"consume\\":false' in script
+    assert '\\"consume\\":true' in script
+    assert script.index('\\"consume\\":false') < script.index('\\"consume\\":true')
     assert "/usr/local/bin/marzban-node" in script
     assert "openssl req -x509" in script
     assert "/var/lib/marzban-node/ssl_cert.pem" in script

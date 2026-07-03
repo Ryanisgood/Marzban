@@ -51,6 +51,7 @@ class NodeProvisionResponse(BaseModel):
 
 class NodeProvisionRedeemRequest(BaseModel):
     token: str
+    consume: bool = False
 
 
 class NodeInstallPayload(BaseModel):
