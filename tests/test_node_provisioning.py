@@ -26,6 +26,31 @@ from app.xray.node_provisioning import (
 )
 
 
+def test_node_provision_create_requires_at_least_one_inbound():
+    try:
+        NodeProvisionCreate(name="empty", address="node.example.com", inbounds=[])
+    except ValueError as exc:
+        assert "inbounds" in str(exc)
+    else:
+        raise AssertionError("expected provisioning request without inbounds to fail")
+
+
+def test_node_provision_create_rejects_duplicate_protocol_port():
+    try:
+        NodeProvisionCreate(
+            name="duplicate",
+            address="node.example.com",
+            inbounds=[
+                NodeProvisionInbound(protocol=NodeProvisionProtocol.hy2, port=8443),
+                NodeProvisionInbound(protocol=NodeProvisionProtocol.hy2, port=8443),
+            ],
+        )
+    except ValueError as exc:
+        assert "Duplicate protocol/port" in str(exc)
+    else:
+        raise AssertionError("expected duplicate protocol/port to fail")
+
+
 def _db_session():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
