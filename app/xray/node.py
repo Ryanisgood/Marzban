@@ -41,6 +41,17 @@ class NodeAPIError(Exception):
         self.detail = detail
 
 
+def config_requires_sing_box(config: XRayConfig):
+    return any(
+        (
+            inbound.get("protocol") == "hysteria"
+            and inbound.get("settings", {}).get("version") == 2
+            and inbound.get("streamSettings", {}).get("network") == "hysteria"
+        )
+        for inbound in config.get("inbounds", [])
+    )
+
+
 class ReSTXRayNode:
     def __init__(self,
                  address: str,
@@ -81,6 +92,8 @@ class ReSTXRayNode:
         self._started = False
         self._xray_api_available = False
         self._features = []
+        self._core_kind = None
+        self._last_started_inbounds = None
 
     def _prepare_config(self, config: XRayConfig):
         config = deepcopy(config)
@@ -141,7 +154,20 @@ class ReSTXRayNode:
     @property
     def started(self):
         res = self.make_request("/", timeout=3)
+        self._update_runtime_state(res)
         return res.get('started', False)
+
+    @property
+    def core_kind(self):
+        return self._core_kind
+
+    @property
+    def xray_api_available(self):
+        return self._xray_api_available
+
+    @property
+    def last_started_inbounds(self):
+        return self._last_started_inbounds
 
     @property
     def api(self):
@@ -177,7 +203,7 @@ class ReSTXRayNode:
 
     def get_version(self):
         res = self.make_request("/", timeout=3)
-        self._features = res.get("features") or []
+        self._update_runtime_state(res)
         return res.get('core_version')
 
     def _ensure_controller_inbounds_capability(self):
@@ -214,6 +240,11 @@ class ReSTXRayNode:
         self._started = True
         self._ensure_controller_inbounds_supported(res)
         self._configure_xray_api(res)
+        self._last_started_inbounds = (
+            list(self.active_inbounds)
+            if self.active_inbounds is not None
+            else None
+        )
 
         return res
 
@@ -225,6 +256,8 @@ class ReSTXRayNode:
         self._api = None
         self._xray_api_available = False
         self._started = False
+        self._core_kind = None
+        self._last_started_inbounds = None
 
     def restart(self, config: XRayConfig):
         if not self.connected:
@@ -246,6 +279,11 @@ class ReSTXRayNode:
         self._started = True
         self._ensure_controller_inbounds_supported(res)
         self._configure_xray_api(res)
+        self._last_started_inbounds = (
+            list(self.active_inbounds)
+            if self.active_inbounds is not None
+            else None
+        )
 
         return res
 
@@ -261,10 +299,14 @@ class ReSTXRayNode:
                 "Upgrade marzban-node or use legacy INBOUNDS mode.",
             )
 
-    def _configure_xray_api(self, response: dict):
-        self._api = None
+    def _update_runtime_state(self, response: dict):
         self._features = response.get("features") or []
         self._xray_api_available = response.get('xray_api', True)
+        self._core_kind = response.get("core_kind")
+
+    def _configure_xray_api(self, response: dict):
+        self._api = None
+        self._update_runtime_state(response)
         if not self._xray_api_available:
             return
 
@@ -376,6 +418,9 @@ class RPyCXRayNode:
 
         self._service = Service()
         self._api = None
+        self._core_kind = None
+        self._xray_api_available = True
+        self._last_started_inbounds = None
 
     def disconnect(self):
         try:
@@ -431,7 +476,22 @@ class RPyCXRayNode:
         if not self.started:
             raise ConnectionError("Node is not started")
 
+        if not self._xray_api_available:
+            raise ConnectionError("Node does not expose Xray API")
+
         return self._api
+
+    @property
+    def core_kind(self):
+        return self._core_kind
+
+    @property
+    def xray_api_available(self):
+        return self._xray_api_available
+
+    @property
+    def last_started_inbounds(self):
+        return self._last_started_inbounds
 
     def get_version(self):
         return self.remote.fetch_xray_version()
@@ -472,6 +532,16 @@ class RPyCXRayNode:
         json_config = config.to_json()
         self.remote.start(json_config)
         self.started = True
+        self._core_kind = None if config_requires_sing_box(config) else "xray"
+        self._xray_api_available = self._core_kind == "xray"
+        self._last_started_inbounds = (
+            list(self.active_inbounds)
+            if self.active_inbounds is not None
+            else None
+        )
+        self._api = None
+        if not self._xray_api_available:
+            return
 
         # connect to API
         self._api = XRayAPI(
@@ -504,6 +574,9 @@ class RPyCXRayNode:
         self.remote.stop()
         self.started = False
         self._api = None
+        self._core_kind = None
+        self._xray_api_available = False
+        self._last_started_inbounds = None
 
     def restart(self, config: XRayConfig):
         self.started = False
@@ -511,6 +584,14 @@ class RPyCXRayNode:
         json_config = config.to_json()
         self.remote.restart(json_config)
         self.started = True
+        self._core_kind = None if config_requires_sing_box(config) else "xray"
+        self._xray_api_available = self._core_kind == "xray"
+        self._last_started_inbounds = (
+            list(self.active_inbounds)
+            if self.active_inbounds is not None
+            else None
+        )
+        self._api = None
 
     @contextmanager
     def get_logs(self):

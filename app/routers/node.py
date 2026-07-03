@@ -21,6 +21,7 @@ from app.models.node import (
 )
 from app.models.proxy import ProxyHost
 from app.utils import responses
+from app.xray.node_status import build_node_runtime_status, get_inbound_user_counts
 
 router = APIRouter(
     tags=["Node"], prefix="/api", responses={401: responses._401, 403: responses._403}
@@ -60,6 +61,16 @@ def validate_inbounds_selection(inbounds_mode: NodeInboundsMode, active_inbounds
     validate_active_inbounds(active_inbounds)
 
 
+def node_response(dbnode, inbound_user_counts=None) -> NodeResponse:
+    response = NodeResponse.model_validate(dbnode)
+    response.runtime_status = build_node_runtime_status(
+        dbnode,
+        runtime_node=xray.nodes.get(dbnode.id),
+        inbound_user_counts=inbound_user_counts,
+    )
+    return response
+
+
 @router.get("/node/settings", response_model=NodeSettings)
 def get_node_settings(
     db: Session = Depends(get_db), admin: Admin = Depends(Admin.check_sudo_admin)
@@ -90,16 +101,17 @@ def add_node(
     bg.add_task(add_host_if_needed, new_node, db)
 
     logger.info(f'New node "{dbnode.name}" added')
-    return dbnode
+    return node_response(dbnode)
 
 
 @router.get("/node/{node_id}", response_model=NodeResponse)
 def get_node(
     dbnode: NodeResponse = Depends(get_dbnode),
+    db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Retrieve details of a specific node by its ID."""
-    return dbnode
+    return node_response(dbnode, get_inbound_user_counts(db))
 
 
 @router.websocket("/node/{node_id}/logs")
@@ -175,14 +187,18 @@ def get_nodes(
     db: Session = Depends(get_db), _: Admin = Depends(Admin.check_sudo_admin)
 ):
     """Retrieve a list of all nodes. Accessible only to sudo admins."""
-    return crud.get_nodes(db)
+    inbound_user_counts = get_inbound_user_counts(db)
+    return [
+        node_response(dbnode, inbound_user_counts)
+        for dbnode in crud.get_nodes(db)
+    ]
 
 
 @router.put("/node/{node_id}", response_model=NodeResponse)
 def modify_node(
     modified_node: NodeModify,
     bg: BackgroundTasks,
-    dbnode: NodeResponse = Depends(get_node),
+    dbnode: NodeResponse = Depends(get_dbnode),
     db: Session = Depends(get_db),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
@@ -216,13 +232,13 @@ def modify_node(
         bg.add_task(xray.operations.restart_node, node_id=updated_node.id)
 
     logger.info(f'Node "{dbnode.name}" modified')
-    return dbnode
+    return node_response(updated_node, get_inbound_user_counts(db))
 
 
 @router.post("/node/{node_id}/reconnect")
 def reconnect_node(
     bg: BackgroundTasks,
-    dbnode: NodeResponse = Depends(get_node),
+    dbnode: NodeResponse = Depends(get_dbnode),
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Trigger a reconnection for the specified node. Only accessible to sudo admins."""
@@ -232,7 +248,7 @@ def reconnect_node(
 
 @router.delete("/node/{node_id}")
 def remove_node(
-    dbnode: NodeResponse = Depends(get_node),
+    dbnode: NodeResponse = Depends(get_dbnode),
     db: Session = Depends(get_db),
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):

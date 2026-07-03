@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import ConfigDict, BaseModel, Field
 
@@ -70,11 +70,32 @@ class NodeModify(Node):
     })
 
 
+class NodeInboundRuntimeDetail(BaseModel):
+    tag: str
+    protocol: str
+    network: Optional[str] = None
+    tls: Optional[str] = None
+    port: Optional[Union[int, str]] = None
+    public_port: Optional[Union[int, str]] = None
+    public_ports: List[Union[int, str]] = Field(default_factory=list)
+    users_count: int = 0
+
+
+class NodeRuntimeStatus(BaseModel):
+    active_inbounds_details: List[NodeInboundRuntimeDetail] = Field(default_factory=list)
+    expected_core: Optional[str] = None
+    actual_core: Optional[str] = None
+    core_reason: str
+    xray_api_available: Optional[bool] = None
+    restart_required: bool = False
+
+
 class NodeResponse(Node):
     id: int
     xray_version: Optional[str] = None
     status: NodeStatus
     message: Optional[str] = None
+    runtime_status: Optional[NodeRuntimeStatus] = None
     model_config = ConfigDict(from_attributes=True)
 
 

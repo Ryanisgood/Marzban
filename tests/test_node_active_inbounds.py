@@ -16,6 +16,7 @@ from app.models.proxy import ProxyTypes
 from app.models.user import UserDataLimitResetStrategy, UserStatus
 from app.xray import operations
 from app.xray.config import XRayConfig
+from app.xray.node_status import build_node_runtime_status
 from app.xray.node import NodeAPIError, ReSTXRayNode
 
 
@@ -123,6 +124,157 @@ def test_node_active_inbounds_helper_uses_panel_mode_only():
 
     assert operations._node_active_inbounds(panel_node) == ["VLESS"]
     assert operations._node_active_inbounds(legacy_node) is None
+
+
+def test_node_runtime_status_describes_sing_box_strategy(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(
+        operations.xray,
+        "hosts",
+        {"HY2": [{"address": ["203.0.113.10"], "port": 9443}]},
+    )
+
+    dbnode = SimpleNamespace(
+        id=1,
+        address="203.0.113.10",
+        inbounds_mode=NodeInboundsMode.panel,
+        active_inbounds=["HY2"],
+    )
+    runtime_node = SimpleNamespace(
+        last_started_inbounds=["VLESS"],
+        core_kind="xray",
+        xray_api_available=False,
+    )
+
+    status = build_node_runtime_status(
+        dbnode,
+        runtime_node=runtime_node,
+        inbound_user_counts={"HY2": 10},
+    )
+
+    assert status.expected_core == "sing-box"
+    assert status.actual_core == "xray"
+    assert status.core_reason == "INBOUNDS contains hysteria2: HY2"
+    assert status.xray_api_available is False
+    assert status.restart_required is True
+    assert status.active_inbounds_details[0].tag == "HY2"
+    assert status.active_inbounds_details[0].port == 8443
+    assert status.active_inbounds_details[0].public_port == 9443
+    assert status.active_inbounds_details[0].users_count == 10
+
+
+def test_node_runtime_status_describes_xray_strategy(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(operations.xray, "hosts", {})
+
+    dbnode = SimpleNamespace(
+        id=2,
+        address="198.51.100.20",
+        inbounds_mode=NodeInboundsMode.panel,
+        active_inbounds=["VLESS"],
+    )
+    runtime_node = SimpleNamespace(
+        last_started_inbounds=["VLESS"],
+        core_kind="xray",
+        xray_api_available=True,
+    )
+
+    status = build_node_runtime_status(
+        dbnode,
+        runtime_node=runtime_node,
+        inbound_user_counts={"VLESS": 3},
+    )
+
+    assert status.expected_core == "xray"
+    assert status.actual_core == "xray"
+    assert status.core_reason == "All active inbounds are Xray-compatible"
+    assert status.xray_api_available is True
+    assert status.restart_required is False
+    assert status.active_inbounds_details[0].public_port == 443
+    assert status.active_inbounds_details[0].users_count == 3
+
+
+def test_node_runtime_status_requires_restart_when_expected_core_is_not_running(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(operations.xray, "hosts", {})
+
+    dbnode = SimpleNamespace(
+        id=2,
+        address="198.51.100.20",
+        inbounds_mode=NodeInboundsMode.panel,
+        active_inbounds=["VLESS"],
+    )
+    runtime_node = SimpleNamespace(
+        last_started_inbounds=["VLESS"],
+        core_kind=None,
+        xray_api_available=False,
+    )
+
+    status = build_node_runtime_status(dbnode, runtime_node=runtime_node)
+
+    assert status.actual_core is None
+    assert status.restart_required is True
+
+
+def test_node_runtime_status_requires_restart_when_runtime_node_is_missing(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(operations.xray, "hosts", {})
+
+    dbnode = SimpleNamespace(
+        id=2,
+        address="198.51.100.20",
+        inbounds_mode=NodeInboundsMode.panel,
+        active_inbounds=["VLESS"],
+    )
+
+    status = build_node_runtime_status(dbnode, runtime_node=None)
+
+    assert status.expected_core == "xray"
+    assert status.actual_core is None
+    assert status.restart_required is True
+
+
+def test_node_runtime_status_keeps_stale_active_inbound_visible(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+
+    dbnode = SimpleNamespace(
+        id=2,
+        address="198.51.100.20",
+        inbounds_mode=NodeInboundsMode.panel,
+        active_inbounds=["REMOVED"],
+    )
+
+    status = build_node_runtime_status(dbnode, runtime_node=None)
+
+    assert status.expected_core is None
+    assert status.core_reason == "Unknown active inbound(s): REMOVED"
+    assert status.active_inbounds_details[0].tag == "REMOVED"
+    assert status.active_inbounds_details[0].protocol == "unknown"
+
+
+def test_node_runtime_status_marks_legacy_mode_unknown(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+
+    dbnode = SimpleNamespace(
+        id=3,
+        address="192.0.2.30",
+        inbounds_mode=NodeInboundsMode.legacy,
+        active_inbounds=["HY2"],
+    )
+
+    status = build_node_runtime_status(dbnode, runtime_node=None)
+
+    assert status.expected_core is None
+    assert status.actual_core is None
+    assert status.core_reason == "Legacy INBOUNDS mode; controller does not own this node's inbound selection"
+    assert status.restart_required is False
+    assert status.active_inbounds_details == []
 
 
 def test_node_api_iterator_skips_inbounds_not_running_on_panel_node():
