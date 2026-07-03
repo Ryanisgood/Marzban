@@ -10,11 +10,8 @@ from app.db import Session, get_db
 from app.models.admin import Admin
 from app.models.core import CoreStats
 from app.utils import responses
-from app.xray import XRayConfig
 from app.xray.node_provisioning import (
-    apply_provisioned_config,
-    cleanup_orphaned_provisioned_inbounds,
-    validate_core_config_preserves_panel_inbounds,
+    apply_core_config_update,
 )
 from config import XRAY_JSON
 
@@ -119,12 +116,8 @@ def modify_core_config(
 ) -> dict:
     """Modify the core configuration and restart the core."""
     try:
-        validate_core_config_preserves_panel_inbounds(db, payload)
-        payload, _ = cleanup_orphaned_provisioned_inbounds(db, payload)
-        XRayConfig(payload, api_port=xray.config.api_port)
+        payload = apply_core_config_update(db, payload)
     except ValueError as err:
         raise HTTPException(status_code=400, detail=str(err))
-
-    apply_provisioned_config(payload)
 
     return payload

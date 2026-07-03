@@ -13,9 +13,11 @@ from app.db.crud import create_node_provision_token, redeem_node_provision_token
 from app.db import crud
 from app.models.node import NodeInboundsMode
 from app.models.node_provision import NodeProvisionCreate, NodeProvisionInbound
-from app.models.node_provision import NodeProvisionProtocol
+from app.models.node_provision import NodeProvisionProtocol, NodeProvisionRedeemRequest
+from app.routers.node import redeem_node_provision
 from app.xray.config import XRayConfig
 from app.xray.node_provisioning import (
+    apply_core_config_update,
     apply_provisioned_config,
     build_generated_inbounds,
     choose_core_kind,
@@ -23,6 +25,7 @@ from app.xray.node_provisioning import (
     hash_install_token,
     provision_node,
     redeem_node_install_payload,
+    remove_provisioned_node,
     render_node_install_script,
     validate_core_config_preserves_panel_inbounds,
     verify_install_token,
@@ -738,6 +741,142 @@ def test_cleanup_orphaned_provisioned_inbounds_removes_generated_tags_without_db
 
     assert removed == ["node-99-hy2-8443"]
     assert [inbound["tag"] for inbound in cleaned["inbounds"]] == ["manual"]
+
+
+def test_cleanup_orphaned_provisioned_inbounds_removes_vless_generated_tags():
+    db = _db_session()
+    config = {
+        "inbounds": [
+            {
+                "tag": "node-99-vless-443",
+                "listen": "0.0.0.0",
+                "port": 443,
+                "protocol": "vless",
+                "settings": {"clients": []},
+            }
+        ],
+        "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+    }
+
+    cleaned, removed = cleanup_orphaned_provisioned_inbounds(db, config)
+
+    assert removed == ["node-99-vless-443"]
+    assert cleaned["inbounds"] == []
+
+
+def test_apply_core_config_update_validates_and_applies_inside_lock(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
+    db = _db_session()
+    events = []
+
+    class TrackingLock:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("exit")
+
+    monkeypatch.setattr(provisioning, "_config_apply_lock", TrackingLock())
+    monkeypatch.setattr(
+        provisioning,
+        "validate_core_config_preserves_panel_inbounds",
+        lambda db, payload: events.append("validate"),
+    )
+    monkeypatch.setattr(
+        provisioning,
+        "cleanup_orphaned_provisioned_inbounds",
+        lambda db, payload: (payload, []),
+    )
+    monkeypatch.setattr(
+        provisioning,
+        "_apply_provisioned_config",
+        lambda payload: events.append("apply"),
+    )
+
+    apply_core_config_update(
+        db,
+        {
+            "inbounds": [
+                {
+                    "tag": "manual",
+                    "listen": "0.0.0.0",
+                    "port": 1080,
+                    "protocol": "shadowsocks",
+                    "settings": {"clients": [], "network": "tcp"},
+                }
+            ],
+            "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+        },
+    )
+
+    assert events == ["enter", "validate", "apply", "exit"]
+
+
+def test_redeem_node_provision_endpoint_rejects_client_consumption():
+    db = _db_session()
+
+    try:
+        redeem_node_provision(
+            NodeProvisionRedeemRequest(token="token", consume=True),
+            db,
+        )
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 400
+        assert "finalized by controller" in exc.detail
+    else:
+        raise AssertionError("expected client consume request to fail")
+
+
+def test_remove_provisioned_node_removes_generated_inbound_rows_and_config(monkeypatch):
+    from app import xray
+    import app.xray.node_provisioning as provisioning
+
+    db = _db_session()
+    dbnode = _db_node(db)
+    dbnode.inbounds_mode = NodeInboundsMode.panel
+    inbound = ProxyInbound(tag="node-1-hy2-8443")
+    db.add(inbound)
+    db.flush()
+    dbnode.active_inbound_objects = [inbound]
+    db.commit()
+    xray.config = XRayConfig(
+        {
+            "inbounds": [
+                {
+                    "tag": "node-1-hy2-8443",
+                    "listen": "0.0.0.0",
+                    "port": 8443,
+                    "protocol": "hysteria",
+                    "settings": {"version": 2, "users": []},
+                    "streamSettings": {"network": "hysteria"},
+                },
+                {
+                    "tag": "manual",
+                    "listen": "0.0.0.0",
+                    "port": 1080,
+                    "protocol": "shadowsocks",
+                    "settings": {"clients": [], "network": "tcp"},
+                },
+            ],
+            "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+        }
+    )
+
+    applied_configs = []
+    monkeypatch.setattr(
+        provisioning,
+        "_apply_provisioned_config",
+        lambda payload: applied_configs.append(payload),
+    )
+
+    removed_tags = remove_provisioned_node(db, dbnode)
+
+    assert removed_tags == ["node-1-hy2-8443"]
+    assert db.query(ProxyInbound).filter(ProxyInbound.tag == "node-1-hy2-8443").first() is None
+    applied_tags = [inbound["tag"] for inbound in applied_configs[-1]["inbounds"]]
+    assert "node-1-hy2-8443" not in applied_tags
+    assert "manual" in applied_tags
 
 
 def test_apply_provisioned_config_uses_core_config_lifecycle(monkeypatch, tmp_path):

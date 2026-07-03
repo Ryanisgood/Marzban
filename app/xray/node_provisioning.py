@@ -34,7 +34,7 @@ from config import (
 ProtocolPort = Tuple[NodeProvisionProtocol, int]
 _config_apply_lock = threading.RLock()
 _GENERATED_INBOUND_TAG = re.compile(
-    r"^node-\d+-(hy2|vless-reality|shadowsocks)-\d+$"
+    r"^node-\d+-(hy2|vless|vless-reality|shadowsocks)-\d+$"
 )
 
 
@@ -269,6 +269,15 @@ def validate_core_config_preserves_panel_inbounds(db: Session, payload: dict) ->
         )
 
 
+def apply_core_config_update(db: Session, payload: dict) -> dict:
+    with _config_apply_lock:
+        validate_core_config_preserves_panel_inbounds(db, payload)
+        payload, _ = cleanup_orphaned_provisioned_inbounds(db, payload)
+        XRayConfig(payload, api_port=xray.config.api_port)
+        _apply_provisioned_config(payload)
+        return payload
+
+
 def cleanup_orphaned_provisioned_inbounds(
     db: Session, payload: dict
 ) -> tuple[dict, list[str]]:
@@ -304,6 +313,29 @@ def reconcile_orphaned_provisioned_config(db: Session) -> list[str]:
         _atomic_write_text(XRAY_JSON, json.dumps(cleaned, indent=4))
         xray.hosts.update()
         return removed_tags
+
+
+def generated_inbound_tags_for_node(dbnode: DBNode) -> list[str]:
+    return [
+        tag
+        for tag in dbnode.active_inbounds
+        if _GENERATED_INBOUND_TAG.match(tag)
+    ]
+
+
+def remove_provisioned_node(db: Session, dbnode: DBNode) -> list[str]:
+    tags = generated_inbound_tags_for_node(dbnode)
+    with _config_apply_lock:
+        crud.remove_node(db, dbnode, remove_inbound_tags=tags)
+        if tags:
+            payload = xray.config.copy()
+            payload["inbounds"] = [
+                inbound
+                for inbound in payload.get("inbounds", [])
+                if inbound.get("tag") not in set(tags)
+            ]
+            _apply_provisioned_config(payload)
+    return tags
 
 
 def _panel_managed_inbound_tags(db: Session) -> set[str]:

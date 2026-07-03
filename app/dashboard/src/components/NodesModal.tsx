@@ -15,6 +15,7 @@ import {
   Checkbox,
   Collapse,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   HStack,
   IconButton,
@@ -117,7 +118,14 @@ const CopiedIcon = chakra(CheckIcon, {
   },
 });
 
-const portSchema = z.coerce.number().int().min(1).max(65535);
+const requiredNumberSchema = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.coerce.number()
+);
+const portSchema = requiredNumberSchema.pipe(z.number().int().min(1).max(65535));
+const numberInputValue = (value: unknown) => (value == null ? "" : String(value));
+const parseNumberInput = (value: string | number) =>
+  value === "" ? "" : Number(value);
 
 const ProvisionNodeFormSchema = z
   .object({
@@ -125,17 +133,37 @@ const ProvisionNodeFormSchema = z
     address: z.string().min(1),
     port: portSchema,
     api_port: portSchema,
-    usage_coefficient: z.coerce.number().gt(0),
+    usage_coefficient: requiredNumberSchema.pipe(z.number().gt(0)),
     hy2: z.boolean(),
-    hy2_port: portSchema,
+    hy2_port: z.unknown(),
     vless_reality: z.boolean(),
-    vless_reality_port: portSchema,
+    vless_reality_port: z.unknown(),
     shadowsocks: z.boolean(),
-    shadowsocks_port: portSchema,
+    shadowsocks_port: z.unknown(),
   })
-  .refine((value) => value.hy2 || value.vless_reality || value.shadowsocks, {
-    message: "Select at least one protocol",
-    path: ["hy2"],
+  .superRefine((value, ctx) => {
+    if (!value.hy2 && !value.vless_reality && !value.shadowsocks) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select at least one protocol",
+        path: ["hy2"],
+      });
+    }
+
+    [
+      [value.hy2, value.hy2_port, "hy2_port"],
+      [value.vless_reality, value.vless_reality_port, "vless_reality_port"],
+      [value.shadowsocks, value.shadowsocks_port, "shadowsocks_port"],
+    ].forEach(([enabled, port, path]) => {
+      if (!enabled) return;
+      const result = portSchema.safeParse(port);
+      if (!result.success) {
+        ctx.addIssue({
+          ...result.error.issues[0],
+          path: [path as string],
+        });
+      }
+    });
   });
 
 const coreColor = (core?: string | null) => {
@@ -622,8 +650,8 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                         size="sm"
                         type="number"
                         placeholder="62050"
-                        value={String(field.value)}
-                        onChange={(value) => field.onChange(Number(value))}
+                        value={numberInputValue(field.value)}
+                        onChange={(value) => field.onChange(parseNumberInput(value))}
                         error={provisionForm.formState.errors.port?.message}
                       />
                     )}
@@ -639,8 +667,8 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                         size="sm"
                         type="number"
                         placeholder="62051"
-                        value={String(field.value)}
-                        onChange={(value) => field.onChange(Number(value))}
+                        value={numberInputValue(field.value)}
+                        onChange={(value) => field.onChange(parseNumberInput(value))}
                         error={provisionForm.formState.errors.api_port?.message}
                       />
                     )}
@@ -656,8 +684,8 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                         size="sm"
                         type="number"
                         placeholder="1"
-                        value={String(field.value)}
-                        onChange={(value) => field.onChange(Number(value))}
+                        value={numberInputValue(field.value)}
+                        onChange={(value) => field.onChange(parseNumberInput(value))}
                         error={
                           provisionForm.formState.errors.usage_coefficient?.message
                         }
@@ -666,7 +694,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                   />
                 </Box>
               </HStack>
-              <FormControl py={1}>
+              <FormControl py={1} isInvalid={!!provisionForm.formState.errors.hy2}>
                 <FormLabel m={0}>{t("nodes.provisionProtocols")}</FormLabel>
                 <VStack align="stretch" spacing={2} pt={2}>
                   <HStack alignItems="center">
@@ -680,10 +708,16 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                           size="sm"
                           type="number"
                           placeholder="8443"
-                          value={String(field.value)}
-                          onChange={(value) => field.onChange(Number(value))}
+                          value={numberInputValue(field.value)}
+                          onChange={(value) =>
+                            field.onChange(parseNumberInput(value))
+                          }
                           disabled={!hy2Enabled}
-                          error={provisionForm.formState.errors.hy2_port?.message}
+                          error={
+                            hy2Enabled
+                              ? provisionForm.formState.errors.hy2_port?.message
+                              : undefined
+                          }
                         />
                       )}
                     />
@@ -701,11 +735,15 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                           size="sm"
                           type="number"
                           placeholder="443"
-                          value={String(field.value)}
-                          onChange={(value) => field.onChange(Number(value))}
+                          value={numberInputValue(field.value)}
+                          onChange={(value) =>
+                            field.onChange(parseNumberInput(value))
+                          }
                           disabled={!vlessRealityEnabled}
                           error={
-                            provisionForm.formState.errors.vless_reality_port?.message
+                            vlessRealityEnabled
+                              ? provisionForm.formState.errors.vless_reality_port?.message
+                              : undefined
                           }
                         />
                       )}
@@ -724,17 +762,26 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                           size="sm"
                           type="number"
                           placeholder="8388"
-                          value={String(field.value)}
-                          onChange={(value) => field.onChange(Number(value))}
+                          value={numberInputValue(field.value)}
+                          onChange={(value) =>
+                            field.onChange(parseNumberInput(value))
+                          }
                           disabled={!shadowsocksEnabled}
                           error={
-                            provisionForm.formState.errors.shadowsocks_port?.message
+                            shadowsocksEnabled
+                              ? provisionForm.formState.errors.shadowsocks_port?.message
+                              : undefined
                           }
                         />
                       )}
                     />
                   </HStack>
                 </VStack>
+                {provisionForm.formState.errors.hy2 && (
+                  <FormErrorMessage>
+                    {t("nodes.provisionSelectProtocol")}
+                  </FormErrorMessage>
+                )}
               </FormControl>
               <HStack>
                 <Badge colorScheme={expectedCore === "sing-box" ? "purple" : "blue"}>

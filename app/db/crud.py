@@ -1427,7 +1427,12 @@ def redeem_node_provision_tokens_for_node(
     return updated
 
 
-def remove_node(db: Session, dbnode: Node) -> Node:
+def remove_node(
+    db: Session,
+    dbnode: Node,
+    *,
+    remove_inbound_tags: Optional[List[str]] = None,
+) -> Node:
     """
     Removes a node from the database.
 
@@ -1446,6 +1451,19 @@ def remove_node(db: Session, dbnode: Node) -> Node:
         {NodeProvisionToken.revoked_at: datetime.utcnow()},
         synchronize_session=False,
     )
+    if remove_inbound_tags:
+        tags_to_remove = set(remove_inbound_tags)
+        dbnode.active_inbound_objects = [
+            inbound
+            for inbound in dbnode.active_inbound_objects
+            if inbound.tag not in tags_to_remove
+        ]
+        db.flush()
+        (
+            db.query(ProxyInbound)
+            .filter(ProxyInbound.tag.in_(tags_to_remove))
+            .delete(synchronize_session=False)
+        )
     db.delete(dbnode)
     db.commit()
     return dbnode

@@ -32,6 +32,7 @@ from app.xray.node_provisioning import (
     apply_provisioned_config,
     provision_node,
     redeem_node_install_payload,
+    remove_provisioned_node,
     render_node_install_script,
 )
 from app.xray.node_status import build_node_runtime_status, get_inbound_user_counts
@@ -331,7 +332,12 @@ def redeem_node_provision(
     db: Session = Depends(get_db),
 ):
     """Redeem a one-time provisioning token for node install settings."""
-    result = redeem_node_install_payload(db, payload.token, consume=payload.consume)
+    if payload.consume:
+        raise HTTPException(
+            status_code=400,
+            detail="Install tokens are finalized by controller after node connection",
+        )
+    result = redeem_node_install_payload(db, payload.token, consume=False)
     if not result:
         raise HTTPException(status_code=403, detail="Invalid or expired install token")
     return result
@@ -490,7 +496,7 @@ def remove_node(
     admin: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Delete a node and remove it from xray in the background."""
-    crud.remove_node(db, dbnode)
+    remove_provisioned_node(db, dbnode)
     xray.operations.remove_node(dbnode.id)
 
     logger.info(f'Node "{dbnode.name}" deleted')
