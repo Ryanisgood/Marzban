@@ -173,8 +173,6 @@ def provision_node(
         inbound_rows.append(inbound_row)
 
     dbnode.active_inbound_objects = inbound_rows
-    apply_config(candidate_config)
-
     install_token, _ = crud.create_node_provision_token(
         db,
         node_id=dbnode.id,
@@ -183,6 +181,8 @@ def provision_node(
         core_kind=core_kind,
         expires_at=datetime.utcnow() + timedelta(minutes=30),
     )
+    apply_config(candidate_config)
+
     install_command = (
         f"curl -fsSL {controller_url.rstrip('/')}/api/node/install.sh "
         f"| sudo bash -s -- --token {install_token}"

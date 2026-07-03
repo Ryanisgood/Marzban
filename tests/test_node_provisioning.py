@@ -279,6 +279,49 @@ def test_provision_node_creates_config_hosts_panel_node_and_install_command(monk
     assert [host.port for host in hosts] == [8443, 443]
 
 
+def test_provision_node_does_not_apply_config_when_token_creation_fails(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
+    db = _db_session()
+    applied_configs = []
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.hy2, port=8443),
+        ],
+    )
+    current_config = {
+        "inbounds": [],
+        "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+    }
+
+    def fail_token_creation(*args, **kwargs):
+        raise RuntimeError("token insert failed")
+
+    monkeypatch.setattr(
+        provisioning.crud,
+        "create_node_provision_token",
+        fail_token_creation,
+    )
+
+    try:
+        provision_node(
+            db,
+            payload,
+            admin_username="admin",
+            controller_url="https://panel.example.com",
+            current_config=current_config,
+            apply_config=applied_configs.append,
+        )
+    except RuntimeError as exc:
+        assert "token insert failed" in str(exc)
+    else:
+        raise AssertionError("expected token creation failure")
+
+    assert applied_configs == []
+
+
 def test_apply_provisioned_config_uses_core_config_lifecycle(monkeypatch, tmp_path):
     from app import xray
     import app.xray.node_provisioning as provisioning
