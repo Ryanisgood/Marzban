@@ -33,6 +33,8 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import {
+  CheckIcon,
+  ClipboardDocumentIcon,
   EyeIcon,
   EyeSlashIcon,
   PlusIcon as HeroIconPlusIcon,
@@ -51,7 +53,9 @@ import {
 } from "contexts/NodesContext";
 import { FC, ReactNode, useEffect, useMemo, useState } from "react";
 import { Controller, useForm, UseFormReturn } from "react-hook-form";
+import CopyToClipboard from "react-copy-to-clipboard";
 import { useTranslation } from "react-i18next";
+import { z } from "zod";
 import {
   UseMutateFunction,
   useMutation,
@@ -98,6 +102,41 @@ const PlusIcon = chakra(HeroIconPlusIcon, {
     strokeWidth: 2,
   },
 });
+
+const CopyIcon = chakra(ClipboardDocumentIcon, {
+  baseStyle: {
+    w: 4,
+    h: 4,
+  },
+});
+
+const CopiedIcon = chakra(CheckIcon, {
+  baseStyle: {
+    w: 4,
+    h: 4,
+  },
+});
+
+const portSchema = z.coerce.number().int().min(1).max(65535);
+
+const ProvisionNodeFormSchema = z
+  .object({
+    name: z.string().min(1),
+    address: z.string().min(1),
+    port: portSchema,
+    api_port: portSchema,
+    usage_coefficient: z.coerce.number().gt(0),
+    hy2: z.boolean(),
+    hy2_port: portSchema,
+    vless_reality: z.boolean(),
+    vless_reality_port: portSchema,
+    shadowsocks: z.boolean(),
+    shadowsocks_port: portSchema,
+  })
+  .refine((value) => value.hy2 || value.vless_reality || value.shadowsocks, {
+    message: "Select at least one protocol",
+    path: ["hy2"],
+  });
 
 const coreColor = (core?: string | null) => {
   if (core === "sing-box") return "purple";
@@ -405,19 +444,7 @@ type AddNodeFormType = {
   resetAccordions: () => void;
 };
 
-type ProvisionNodeFormValues = {
-  name: string;
-  address: string;
-  port: number;
-  api_port: number;
-  usage_coefficient: number;
-  hy2: boolean;
-  hy2_port: number;
-  vless_reality: boolean;
-  vless_reality_port: number;
-  shadowsocks: boolean;
-  shadowsocks_port: number;
-};
+type ProvisionNodeFormValues = z.infer<typeof ProvisionNodeFormSchema>;
 
 const AddNodeForm: FC<AddNodeFormType> = ({
   toggleAccordion,
@@ -430,7 +457,9 @@ const AddNodeForm: FC<AddNodeFormType> = ({
   const [showManualForm, setShowManualForm] = useState(false);
   const [provisionResult, setProvisionResult] =
     useState<NodeProvisionResponseType | null>(null);
+  const [installCommandCopied, setInstallCommandCopied] = useState(false);
   const provisionForm = useForm<ProvisionNodeFormValues>({
+    resolver: zodResolver(ProvisionNodeFormSchema),
     defaultValues: {
       name: "",
       address: "",
@@ -457,6 +486,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
     {
       onSuccess: (result) => {
         setProvisionResult(result);
+        setInstallCommandCopied(false);
         generateSuccessMessage(
           t("nodes.addNodeSuccess", { name: provisionForm.getValues("name") }),
           toast
@@ -464,6 +494,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
         queryClient.invalidateQueries(FetchNodesQueryKey);
       },
       onError: (e) => {
+        setProvisionResult(null);
         generateErrorMessage(e, toast, provisionForm);
       },
     }
@@ -482,7 +513,17 @@ const AddNodeForm: FC<AddNodeFormType> = ({
       generateErrorMessage(e, toast, manualForm);
     },
   });
+  useEffect(() => {
+    if (installCommandCopied) {
+      const timeout = window.setTimeout(() => {
+        setInstallCommandCopied(false);
+      }, 1500);
+      return () => window.clearTimeout(timeout);
+    }
+  }, [installCommandCopied]);
   const submitProvision = (values: ProvisionNodeFormValues) => {
+    setProvisionResult(null);
+    setInstallCommandCopied(false);
     const inbounds: NodeProvisionType["inbounds"] = [];
     if (values.hy2) {
       inbounds.push({ protocol: "hy2", port: Number(values.hy2_port) });
@@ -518,6 +559,9 @@ const AddNodeForm: FC<AddNodeFormType> = ({
   };
   const expectedCore =
     provisionForm.watch("hy2") ? "sing-box" : "Xray";
+  const hy2Enabled = provisionForm.watch("hy2");
+  const vlessRealityEnabled = provisionForm.watch("vless_reality");
+  const shadowsocksEnabled = provisionForm.watch("shadowsocks");
   return (
     <AccordionItem
       border="1px solid"
@@ -553,6 +597,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                     label={t("nodes.nodeName")}
                     size="sm"
                     placeholder="rn1c1g"
+                    error={provisionForm.formState.errors.name?.message}
                     {...provisionForm.register("name", { required: true })}
                   />
                 </Box>
@@ -561,33 +606,63 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                     label={t("nodes.nodeAddress")}
                     size="sm"
                     placeholder="203.0.113.10"
+                    error={provisionForm.formState.errors.address?.message}
                     {...provisionForm.register("address", { required: true })}
                   />
                 </Box>
               </HStack>
               <HStack alignItems="flex-start" w="100%">
                 <Box>
-                  <CustomInput
-                    label={t("nodes.nodePort")}
-                    size="sm"
-                    placeholder="62050"
-                    {...provisionForm.register("port")}
+                  <Controller
+                    name="port"
+                    control={provisionForm.control}
+                    render={({ field }) => (
+                      <CustomInput
+                        label={t("nodes.nodePort")}
+                        size="sm"
+                        type="number"
+                        placeholder="62050"
+                        value={String(field.value)}
+                        onChange={(value) => field.onChange(Number(value))}
+                        error={provisionForm.formState.errors.port?.message}
+                      />
+                    )}
                   />
                 </Box>
                 <Box>
-                  <CustomInput
-                    label={t("nodes.nodeAPIPort")}
-                    size="sm"
-                    placeholder="62051"
-                    {...provisionForm.register("api_port")}
+                  <Controller
+                    name="api_port"
+                    control={provisionForm.control}
+                    render={({ field }) => (
+                      <CustomInput
+                        label={t("nodes.nodeAPIPort")}
+                        size="sm"
+                        type="number"
+                        placeholder="62051"
+                        value={String(field.value)}
+                        onChange={(value) => field.onChange(Number(value))}
+                        error={provisionForm.formState.errors.api_port?.message}
+                      />
+                    )}
                   />
                 </Box>
                 <Box>
-                  <CustomInput
-                    label={t("nodes.usageCoefficient")}
-                    size="sm"
-                    placeholder="1"
-                    {...provisionForm.register("usage_coefficient")}
+                  <Controller
+                    name="usage_coefficient"
+                    control={provisionForm.control}
+                    render={({ field }) => (
+                      <CustomInput
+                        label={t("nodes.usageCoefficient")}
+                        size="sm"
+                        type="number"
+                        placeholder="1"
+                        value={String(field.value)}
+                        onChange={(value) => field.onChange(Number(value))}
+                        error={
+                          provisionForm.formState.errors.usage_coefficient?.message
+                        }
+                      />
+                    )}
                   />
                 </Box>
               </HStack>
@@ -596,33 +671,67 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                 <VStack align="stretch" spacing={2} pt={2}>
                   <HStack alignItems="center">
                     <Checkbox {...provisionForm.register("hy2")}>HY2</Checkbox>
-                    <CustomInput
-                      label={t("nodes.publicPort")}
-                      size="sm"
-                      placeholder="8443"
-                      {...provisionForm.register("hy2_port")}
+                    <Controller
+                      name="hy2_port"
+                      control={provisionForm.control}
+                      render={({ field }) => (
+                        <CustomInput
+                          label={t("nodes.publicPort")}
+                          size="sm"
+                          type="number"
+                          placeholder="8443"
+                          value={String(field.value)}
+                          onChange={(value) => field.onChange(Number(value))}
+                          disabled={!hy2Enabled}
+                          error={provisionForm.formState.errors.hy2_port?.message}
+                        />
+                      )}
                     />
                   </HStack>
                   <HStack alignItems="center">
                     <Checkbox {...provisionForm.register("vless_reality")}>
                       VLESS REALITY
                     </Checkbox>
-                    <CustomInput
-                      label={t("nodes.publicPort")}
-                      size="sm"
-                      placeholder="443"
-                      {...provisionForm.register("vless_reality_port")}
+                    <Controller
+                      name="vless_reality_port"
+                      control={provisionForm.control}
+                      render={({ field }) => (
+                        <CustomInput
+                          label={t("nodes.publicPort")}
+                          size="sm"
+                          type="number"
+                          placeholder="443"
+                          value={String(field.value)}
+                          onChange={(value) => field.onChange(Number(value))}
+                          disabled={!vlessRealityEnabled}
+                          error={
+                            provisionForm.formState.errors.vless_reality_port?.message
+                          }
+                        />
+                      )}
                     />
                   </HStack>
                   <HStack alignItems="center">
                     <Checkbox {...provisionForm.register("shadowsocks")}>
                       Shadowsocks
                     </Checkbox>
-                    <CustomInput
-                      label={t("nodes.publicPort")}
-                      size="sm"
-                      placeholder="8388"
-                      {...provisionForm.register("shadowsocks_port")}
+                    <Controller
+                      name="shadowsocks_port"
+                      control={provisionForm.control}
+                      render={({ field }) => (
+                        <CustomInput
+                          label={t("nodes.publicPort")}
+                          size="sm"
+                          type="number"
+                          placeholder="8388"
+                          value={String(field.value)}
+                          onChange={(value) => field.onChange(Number(value))}
+                          disabled={!shadowsocksEnabled}
+                          error={
+                            provisionForm.formState.errors.shadowsocks_port?.message
+                          }
+                        />
+                      )}
                     />
                   </HStack>
                 </VStack>
@@ -646,9 +755,42 @@ const AddNodeForm: FC<AddNodeFormType> = ({
             <Alert status="success" alignItems="start">
               <AlertIcon />
               <AlertDescription w="full" overflow="hidden">
-                <Text fontSize="sm" mb={2}>
-                  {t("nodes.installCommand")}
-                </Text>
+                <HStack justifyContent="space-between" alignItems="center" mb={2}>
+                  <Box>
+                    <Text fontSize="sm" fontWeight="medium">
+                      {t("nodes.installCommand")}
+                    </Text>
+                    <Text fontSize="xs" color="gray.600" _dark={{ color: "gray.300" }}>
+                      {t("nodes.installCommandHint")}
+                    </Text>
+                  </Box>
+                  <CopyToClipboard
+                    text={provisionResult.install_command}
+                    onCopy={() => setInstallCommandCopied(true)}
+                  >
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      leftIcon={
+                        installCommandCopied ? <CopiedIcon /> : <CopyIcon />
+                      }
+                    >
+                      {installCommandCopied
+                        ? t("usersTable.copied")
+                        : t("nodes.copyInstallCommand")}
+                    </Button>
+                  </CopyToClipboard>
+                </HStack>
+                <HStack mb={2} spacing={2} flexWrap="wrap">
+                  <Badge colorScheme={coreColor(provisionResult.core_kind)}>
+                    {coreLabel(provisionResult.core_kind)}
+                  </Badge>
+                  {provisionResult.active_inbounds.map((tag) => (
+                    <Badge key={tag} variant="subtle">
+                      {tag}
+                    </Badge>
+                  ))}
+                </HStack>
                 <Text
                   fontSize="xs"
                   fontFamily="mono"
