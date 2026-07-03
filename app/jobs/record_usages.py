@@ -127,14 +127,27 @@ def get_outbounds_stats(api: XRayAPI):
         return []
 
 
-def record_user_usages():
-    api_instances = {None: xray.api}
-    usage_coefficient = {None: 1}  # default usage coefficient for the main api instance
+def get_started_node_api_instances():
+    api_instances = {}
+    usage_coefficient = {}
 
     for node_id, node in list(xray.nodes.items()):
         if node.connected and node.started:
-            api_instances[node_id] = node.api
-            usage_coefficient[node_id] = node.usage_coefficient  # fetch the usage coefficient
+            try:
+                api_instances[node_id] = node.api
+            except ConnectionError:
+                continue
+            usage_coefficient[node_id] = node.usage_coefficient
+
+    return api_instances, usage_coefficient
+
+
+def record_user_usages():
+    api_instances = {None: xray.api}
+    usage_coefficient = {None: 1}  # default usage coefficient for the main api instance
+    node_api_instances, node_usage_coefficient = get_started_node_api_instances()
+    api_instances.update(node_api_instances)
+    usage_coefficient.update(node_usage_coefficient)
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {node_id: executor.submit(get_users_stats, api) for node_id, api in api_instances.items()}
@@ -185,9 +198,8 @@ def record_user_usages():
 
 def record_node_usages():
     api_instances = {None: xray.api}
-    for node_id, node in list(xray.nodes.items()):
-        if node.connected and node.started:
-            api_instances[node_id] = node.api
+    node_api_instances, _ = get_started_node_api_instances()
+    api_instances.update(node_api_instances)
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {node_id: executor.submit(get_outbounds_stats, api) for node_id, api in api_instances.items()}
