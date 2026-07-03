@@ -110,7 +110,8 @@ def _build_inbound(
                     "publicKey": public_key,
                     "privateKey": private_key,
                     "shortIds": [secrets.token_hex(8)],
-                    "serverNames": ["example.com"],
+                    "serverNames": ["www.microsoft.com"],
+                    "dest": "www.microsoft.com:443",
                     "SpiderX": "/",
                 },
             },
@@ -136,7 +137,20 @@ def provision_node(
     controller_url: str,
     current_config: dict,
     apply_config: Callable[[dict], None],
+    binary_url: str = MARZBAN_NODE_BINARY_URL,
+    xray_install_url: str = XRAY_INSTALL_SCRIPT_URL,
+    sing_box_install_url: str = SING_BOX_INSTALL_SCRIPT_URL,
 ) -> ProvisionNodeResult:
+    specs = [(inbound.protocol, inbound.port) for inbound in payload.inbounds]
+    core_kind = choose_core_kind([inbound.protocol for inbound in payload.inbounds])
+    validate_install_sources(
+        core_kind,
+        binary_url=binary_url,
+        xray_install_url=xray_install_url,
+        sing_box_install_url=sing_box_install_url,
+    )
+    validate_requested_port_conflicts(current_config, specs)
+
     dbnode = DBNode(
         name=payload.name,
         address=payload.address,
@@ -148,10 +162,9 @@ def provision_node(
     db.add(dbnode)
     db.flush()
 
-    specs = [(inbound.protocol, inbound.port) for inbound in payload.inbounds]
     generated_inbounds = build_generated_inbounds(dbnode.id, specs)
+    validate_generated_inbound_conflicts(current_config, generated_inbounds)
     active_tags = [inbound["tag"] for inbound in generated_inbounds]
-    core_kind = choose_core_kind([inbound.protocol for inbound in payload.inbounds])
 
     candidate_config = deepcopy(current_config)
     candidate_config.setdefault("inbounds", [])
@@ -180,8 +193,18 @@ def provision_node(
         active_inbounds=active_tags,
         core_kind=core_kind,
         expires_at=datetime.utcnow() + timedelta(minutes=30),
+        commit=False,
     )
-    apply_config(candidate_config)
+    applied_config = False
+    try:
+        apply_config(candidate_config)
+        applied_config = True
+        db.commit()
+    except Exception:
+        db.rollback()
+        if applied_config:
+            apply_config(current_config)
+        raise
 
     install_command = (
         f"curl -fsSL {controller_url.rstrip('/')}/api/node/install.sh "
@@ -197,6 +220,105 @@ def provision_node(
         install_command=install_command,
         config=candidate_config,
     )
+
+
+def validate_install_sources(
+    core_kind: str,
+    *,
+    binary_url: str,
+    xray_install_url: str,
+    sing_box_install_url: str,
+) -> None:
+    if not binary_url:
+        raise ValueError(
+            "MARZBAN_NODE_BINARY_URL must be configured for one-command node install"
+        )
+    if core_kind == "xray" and not xray_install_url:
+        raise ValueError(
+            "XRAY_INSTALL_SCRIPT_URL must be configured for Xray node install"
+        )
+    if core_kind == "sing-box" and not sing_box_install_url:
+        raise ValueError(
+            "SING_BOX_INSTALL_SCRIPT_URL must be configured for HY2/sing-box node install"
+        )
+
+
+def validate_generated_inbound_conflicts(
+    current_config: dict, generated_inbounds: Sequence[dict]
+) -> None:
+    occupied = {}
+    for inbound in current_config.get("inbounds", []):
+        endpoint = _inbound_endpoint(inbound)
+        if endpoint:
+            occupied.setdefault(endpoint, inbound.get("tag", "<existing>"))
+
+    generated_seen = {}
+    for inbound in generated_inbounds:
+        endpoint = _inbound_endpoint(inbound)
+        if not endpoint:
+            continue
+        tag = inbound["tag"]
+        if endpoint in generated_seen:
+            raise ValueError(
+                f"Generated inbound port conflict: {tag} conflicts with {generated_seen[endpoint]}"
+            )
+        if endpoint in occupied:
+            raise ValueError(
+                f"Generated inbound port conflict: {tag} conflicts with {occupied[endpoint]}"
+            )
+        generated_seen[endpoint] = tag
+
+
+def validate_requested_port_conflicts(
+    current_config: dict, specs: Sequence[ProtocolPort]
+) -> None:
+    occupied = {}
+    for inbound in current_config.get("inbounds", []):
+        endpoint = _inbound_endpoint(inbound)
+        if endpoint:
+            occupied.setdefault(endpoint, inbound.get("tag", "<existing>"))
+
+    generated_seen = {}
+    for protocol, port in specs:
+        endpoint = ("0.0.0.0", port, _protocol_transport(protocol))
+        label = f"{protocol.value}:{port}"
+        if endpoint in generated_seen:
+            raise ValueError(
+                f"Generated inbound port conflict: {label} conflicts with {generated_seen[endpoint]}"
+            )
+        if endpoint in occupied:
+            raise ValueError(
+                f"Generated inbound port conflict: {label} conflicts with {occupied[endpoint]}"
+            )
+        generated_seen[endpoint] = label
+
+
+def _inbound_endpoint(inbound: dict) -> tuple[str, int, str] | None:
+    port = inbound.get("port")
+    if port is None:
+        return None
+    try:
+        normalized_port = int(port)
+    except (TypeError, ValueError):
+        return None
+
+    listen = inbound.get("listen") or "0.0.0.0"
+    return listen, normalized_port, _inbound_transport(inbound)
+
+
+def _protocol_transport(protocol: NodeProvisionProtocol) -> str:
+    return "udp" if protocol == NodeProvisionProtocol.hy2 else "tcp"
+
+
+def _inbound_transport(inbound: dict) -> str:
+    stream_settings = inbound.get("streamSettings") or {}
+    network = stream_settings.get("network")
+    if network in {"hysteria", "hysteria2", "quic"}:
+        return "udp"
+    settings = inbound.get("settings") or {}
+    if settings.get("network") == "udp":
+        return "udp"
+    return "tcp"
 
 
 def apply_provisioned_config(payload: dict) -> None:

@@ -336,7 +336,9 @@ class NodeProvisionToken(Base):
     __tablename__ = "node_provision_tokens"
 
     id = Column(Integer, primary_key=True)
-    node_id = Column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)
+    node_id = Column(
+        Integer, ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
     token_hash = Column(String(64), unique=True, nullable=False, index=True)
     created_by = Column(String(34), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

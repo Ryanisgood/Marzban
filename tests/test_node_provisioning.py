@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.db.models import Node as DBNode, TLS
+from app.db.models import Node as DBNode, NodeProvisionToken, TLS
 from app.db.models import ProxyHost
 from app.db.crud import create_node_provision_token, redeem_node_provision_token
 from app.models.node import NodeInboundsMode
@@ -126,6 +126,8 @@ def test_build_generated_inbounds_creates_hy2_vless_and_shadowsocks_templates(mo
     reality_settings = inbounds[1]["streamSettings"]["realitySettings"]
     assert reality_settings["privateKey"] == "real-private-key"
     assert reality_settings["publicKey"] == "real-public-key"
+    assert reality_settings["dest"] == "www.microsoft.com:443"
+    assert reality_settings["serverNames"] == ["www.microsoft.com"]
     assert inbounds[2]["protocol"] == "shadowsocks"
     assert inbounds[2]["settings"]["clients"] == []
 
@@ -252,6 +254,8 @@ def test_provision_node_creates_config_hosts_panel_node_and_install_command(monk
         controller_url="https://panel.example.com",
         current_config=current_config,
         apply_config=applied_configs.append,
+        binary_url="https://panel.example.com/download/marzban-node",
+        sing_box_install_url="https://panel.example.com/download/install-sing-box.sh",
     )
 
     assert result.node.name == "rn1c1g"
@@ -313,6 +317,8 @@ def test_provision_node_does_not_apply_config_when_token_creation_fails(monkeypa
             controller_url="https://panel.example.com",
             current_config=current_config,
             apply_config=applied_configs.append,
+            binary_url="https://panel.example.com/download/marzban-node",
+            sing_box_install_url="https://panel.example.com/download/install-sing-box.sh",
         )
     except RuntimeError as exc:
         assert "token insert failed" in str(exc)
@@ -320,6 +326,174 @@ def test_provision_node_does_not_apply_config_when_token_creation_fails(monkeypa
         raise AssertionError("expected token creation failure")
 
     assert applied_configs == []
+
+
+def test_provision_node_rolls_back_db_when_config_apply_fails(monkeypatch):
+    db = _db_session()
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.hy2, port=8443),
+        ],
+    )
+    current_config = {
+        "inbounds": [],
+        "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+    }
+
+    def fail_apply_config(config):
+        raise RuntimeError("core restart failed")
+
+    try:
+        provision_node(
+            db,
+            payload,
+            admin_username="admin",
+            controller_url="https://panel.example.com",
+            current_config=current_config,
+            apply_config=fail_apply_config,
+            binary_url="https://panel.example.com/download/marzban-node",
+            sing_box_install_url="https://panel.example.com/download/install-sing-box.sh",
+        )
+    except RuntimeError as exc:
+        assert "core restart failed" in str(exc)
+    else:
+        raise AssertionError("expected config apply failure")
+
+    assert db.query(DBNode).count() == 0
+    assert db.query(NodeProvisionToken).count() == 0
+
+
+def test_provision_node_rejects_conflicting_tcp_ports():
+    db = _db_session()
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.vless_reality, port=443),
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.shadowsocks, port=443),
+        ],
+    )
+
+    try:
+        provision_node(
+            db,
+            payload,
+            admin_username="admin",
+            controller_url="https://panel.example.com",
+            current_config={"inbounds": [], "outbounds": []},
+            apply_config=lambda config: None,
+            binary_url="https://panel.example.com/download/marzban-node",
+        )
+    except ValueError as exc:
+        assert "port conflict" in str(exc)
+    else:
+        raise AssertionError("expected TCP port conflict")
+
+
+def test_provision_node_rejects_conflict_with_existing_inbound_port(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
+    db = _db_session()
+    monkeypatch.setattr(
+        provisioning,
+        "generate_reality_key_pair",
+        lambda: ("real-private-key", "real-public-key"),
+    )
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.vless_reality, port=443),
+        ],
+    )
+    current_config = {
+        "inbounds": [
+            {
+                "tag": "existing-ss",
+                "listen": "0.0.0.0",
+                "port": 443,
+                "protocol": "shadowsocks",
+                "settings": {"clients": [], "network": "tcp"},
+            }
+        ],
+        "outbounds": [],
+    }
+
+    try:
+        provision_node(
+            db,
+            payload,
+            admin_username="admin",
+            controller_url="https://panel.example.com",
+            current_config=current_config,
+            apply_config=lambda config: None,
+            binary_url="https://panel.example.com/download/marzban-node",
+        )
+    except ValueError as exc:
+        assert "port conflict" in str(exc)
+    else:
+        raise AssertionError("expected existing inbound port conflict")
+
+
+def test_provision_node_requires_binary_url_for_one_command_install():
+    db = _db_session()
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.shadowsocks, port=8388),
+        ],
+    )
+
+    try:
+        provision_node(
+            db,
+            payload,
+            admin_username="admin",
+            controller_url="https://panel.example.com",
+            current_config={"inbounds": [], "outbounds": []},
+            apply_config=lambda config: None,
+            binary_url="",
+        )
+    except ValueError as exc:
+        assert "MARZBAN_NODE_BINARY_URL" in str(exc)
+    else:
+        raise AssertionError("expected missing binary URL to fail")
+
+
+def test_provision_node_requires_sing_box_install_url_for_hy2():
+    db = _db_session()
+    payload = NodeProvisionCreate(
+        name="rn1c1g",
+        address="node.example.com",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.hy2, port=8443),
+        ],
+    )
+
+    try:
+        provision_node(
+            db,
+            payload,
+            admin_username="admin",
+            controller_url="https://panel.example.com",
+            current_config={"inbounds": [], "outbounds": []},
+            apply_config=lambda config: None,
+            binary_url="https://panel.example.com/download/marzban-node",
+            sing_box_install_url="",
+        )
+    except ValueError as exc:
+        assert "SING_BOX_INSTALL_SCRIPT_URL" in str(exc)
+    else:
+        raise AssertionError("expected missing sing-box install URL to fail")
+
+
+def test_node_provision_token_node_fk_cascades_on_delete():
+    foreign_key = next(iter(NodeProvisionToken.__table__.c.node_id.foreign_keys))
+
+    assert foreign_key.ondelete == "CASCADE"
 
 
 def test_apply_provisioned_config_uses_core_config_lifecycle(monkeypatch, tmp_path):

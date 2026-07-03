@@ -28,7 +28,7 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.DateTime(), nullable=True),
         sa.Column("active_inbounds_json", sa.JSON(), nullable=False),
         sa.Column("core_kind", sa.String(length=16), nullable=False),
-        sa.ForeignKeyConstraint(["node_id"], ["nodes.id"]),
+        sa.ForeignKeyConstraint(["node_id"], ["nodes.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(

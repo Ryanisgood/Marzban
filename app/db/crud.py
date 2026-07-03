@@ -1342,6 +1342,7 @@ def create_node_provision_token(
     active_inbounds: List[str],
     core_kind: str,
     expires_at: datetime,
+    commit: bool = True,
 ) -> Tuple[str, NodeProvisionToken]:
     token = secrets.token_urlsafe(32)
     record = NodeProvisionToken(
@@ -1353,7 +1354,10 @@ def create_node_provision_token(
         core_kind=core_kind,
     )
     db.add(record)
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     db.refresh(record)
     return token, record
 
@@ -1365,20 +1369,25 @@ def redeem_node_provision_token(
     now: Optional[datetime] = None,
 ) -> Optional[NodeProvisionToken]:
     now = now or datetime.utcnow()
-    record = (
+    token_hash = _hash_node_provision_token(token)
+    updated = (
         db.query(NodeProvisionToken)
-        .filter(NodeProvisionToken.token_hash == _hash_node_provision_token(token))
+        .filter(NodeProvisionToken.token_hash == token_hash)
         .filter(NodeProvisionToken.redeemed_at.is_(None))
         .filter(NodeProvisionToken.revoked_at.is_(None))
         .filter(NodeProvisionToken.expires_at > now)
+        .update({NodeProvisionToken.redeemed_at: now}, synchronize_session=False)
+    )
+    if updated != 1:
+        db.rollback()
+        return None
+    db.commit()
+
+    record = (
+        db.query(NodeProvisionToken)
+        .filter(NodeProvisionToken.token_hash == token_hash)
         .first()
     )
-    if not record:
-        return None
-
-    record.redeemed_at = now
-    db.commit()
-    db.refresh(record)
     return record
 
 
