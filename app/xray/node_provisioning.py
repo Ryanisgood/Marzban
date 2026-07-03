@@ -4,6 +4,7 @@ import json
 import os
 import secrets
 import tempfile
+import threading
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -30,6 +31,7 @@ from config import (
 
 
 ProtocolPort = Tuple[NodeProvisionProtocol, int]
+_config_apply_lock = threading.RLock()
 
 
 @dataclass
@@ -198,9 +200,13 @@ def provision_node(
 
 
 def apply_provisioned_config(payload: dict) -> None:
+    with _config_apply_lock:
+        _apply_provisioned_config(payload)
+
+
+def _apply_provisioned_config(payload: dict) -> None:
     previous_config = xray.config
     previous_file = _read_optional_file(XRAY_JSON)
-
     try:
         config = XRayConfig(payload, api_port=xray.config.api_port)
         xray.config = config

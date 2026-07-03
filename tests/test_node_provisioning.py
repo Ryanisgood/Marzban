@@ -332,6 +332,53 @@ def test_apply_provisioned_config_uses_core_config_lifecycle(monkeypatch, tmp_pa
     assert xray.config.inbounds_by_tag["node-1-hy2-8443"]["protocol"] == "hysteria"
 
 
+def test_apply_provisioned_config_uses_config_apply_lock(monkeypatch, tmp_path):
+    from app import xray
+    import app.xray.node_provisioning as provisioning
+
+    config_path = tmp_path / "xray.json"
+    events = []
+    candidate_config = {
+        "inbounds": [
+            {
+                "tag": "node-1-hy2-8443",
+                "listen": "0.0.0.0",
+                "port": 8443,
+                "protocol": "hysteria",
+                "settings": {"version": 2, "users": []},
+                "streamSettings": {"network": "hysteria"},
+            }
+        ],
+        "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+    }
+
+    class Lock:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, exc_type, exc, traceback):
+            events.append("exit")
+
+    class Core:
+        def restart(self, startup_config):
+            events.append("restart")
+
+    class Hosts:
+        def update(self):
+            events.append("hosts")
+
+    monkeypatch.setattr(provisioning, "XRAY_JSON", str(config_path))
+    monkeypatch.setattr(provisioning, "_config_apply_lock", Lock())
+    monkeypatch.setattr(xray, "core", Core())
+    monkeypatch.setattr(xray, "hosts", Hosts())
+    monkeypatch.setattr(xray, "nodes", {})
+    monkeypatch.setattr(provisioning.XRayConfig, "include_db_users", lambda self: self)
+
+    apply_provisioned_config(candidate_config)
+
+    assert events == ["enter", "restart", "hosts", "exit"]
+
+
 def test_apply_provisioned_config_restores_previous_file_when_restart_fails(
     monkeypatch, tmp_path
 ):
