@@ -4,6 +4,26 @@ import { z } from "zod";
 import { create } from "zustand";
 import { FilterUsageType, useDashboard } from "./DashboardContext";
 
+const NodeInboundRuntimeDetailSchema = z.object({
+  tag: z.string(),
+  protocol: z.string(),
+  network: z.string().nullable().optional(),
+  tls: z.string().nullable().optional(),
+  port: z.number().or(z.string()).nullable().optional(),
+  public_port: z.number().or(z.string()).nullable().optional(),
+  public_ports: z.array(z.number().or(z.string())).default([]),
+  users_count: z.number().default(0),
+});
+
+const NodeRuntimeStatusSchema = z.object({
+  active_inbounds_details: z.array(NodeInboundRuntimeDetailSchema).default([]),
+  expected_core: z.string().nullable().optional(),
+  actual_core: z.string().nullable().optional(),
+  core_reason: z.string(),
+  xray_api_available: z.boolean().nullable().optional(),
+  restart_required: z.boolean().default(false),
+});
+
 export const NodeSchema = z.object({
   name: z.string().min(1),
   address: z.string().min(1),
@@ -24,6 +44,7 @@ export const NodeSchema = z.object({
     .nullable()
     .optional(),
   message: z.string().nullable().optional(),
+  runtime_status: NodeRuntimeStatusSchema.nullable().optional(),
   add_as_new_host: z.boolean().optional(),
   usage_coefficient: z.number().or(z.string().transform((v) => parseFloat(v))),
 });

@@ -97,6 +97,97 @@ const PlusIcon = chakra(HeroIconPlusIcon, {
   },
 });
 
+const coreColor = (core?: string | null) => {
+  if (core === "sing-box") return "purple";
+  if (core === "xray") return "blue";
+  return "gray";
+};
+
+const coreLabel = (core?: string | null) => {
+  if (core === "sing-box") return "sing-box";
+  if (core === "xray") return "Xray";
+  return "unknown";
+};
+
+const apiLabel = (available?: boolean | null) => {
+  if (available === true) return "available";
+  if (available === false) return "unavailable";
+  return "unknown";
+};
+
+const formatPorts = (ports?: Array<number | string>) => {
+  if (!ports || !ports.length) return "-";
+  return ports.join(", ");
+};
+
+const NodeRuntimeSummary: FC<{ node: NodeType }> = ({ node }) => {
+  const runtime = node.runtime_status;
+  if (!runtime) return null;
+
+  return (
+    <Box
+      w="full"
+      border="1px solid"
+      borderColor="gray.200"
+      _dark={{ borderColor: "gray.600" }}
+      borderRadius="4px"
+      p={3}
+      mb={3}
+    >
+      <VStack align="stretch" spacing={2}>
+        <HStack justify="space-between" align="start">
+          <HStack spacing={2} flexWrap="wrap">
+            <Badge colorScheme={coreColor(runtime.actual_core)}>
+              current: {coreLabel(runtime.actual_core)}
+            </Badge>
+            <Badge colorScheme={coreColor(runtime.expected_core)} variant="outline">
+              expected: {coreLabel(runtime.expected_core)}
+            </Badge>
+            <Badge colorScheme={runtime.xray_api_available ? "green" : "gray"}>
+              Xray API: {apiLabel(runtime.xray_api_available)}
+            </Badge>
+          </HStack>
+          {runtime.restart_required && (
+            <Badge colorScheme="orange">restart required</Badge>
+          )}
+        </HStack>
+        <Text fontSize="xs" color="gray.500">
+          {runtime.core_reason}
+        </Text>
+        {runtime.active_inbounds_details.length > 0 && (
+          <VStack align="stretch" spacing={1} pt={1}>
+            {runtime.active_inbounds_details.map((inbound) => (
+              <HStack
+                key={inbound.tag}
+                justify="space-between"
+                spacing={2}
+                fontSize="xs"
+                borderTop="1px solid"
+                borderColor="gray.100"
+                _dark={{ borderColor: "gray.700" }}
+                pt={1}
+              >
+                <HStack spacing={1} minW={0}>
+                  <Text fontWeight="medium" noOfLines={1}>
+                    {inbound.tag}
+                  </Text>
+                  <Badge fontSize="0.6rem" colorScheme="blue">
+                    {inbound.protocol}
+                  </Badge>
+                </HStack>
+                <HStack spacing={3} flexShrink={0}>
+                  <Text color="gray.500">port {formatPorts(inbound.public_ports)}</Text>
+                  <Text color="gray.500">users {inbound.users_count}</Text>
+                </HStack>
+              </HStack>
+            ))}
+          </VStack>
+        )}
+      </VStack>
+    </Box>
+  );
+};
+
 type AccordionInboundType = {
   toggleAccordion: () => void;
   node: NodeType;
@@ -161,6 +252,19 @@ const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
             {node.name}
           </Text>
           <HStack>
+            {node.runtime_status?.actual_core && (
+              <Badge
+                colorScheme={coreColor(node.runtime_status.actual_core)}
+                rounded="full"
+                display="inline-flex"
+                px={3}
+                py={1}
+              >
+                <Text fontSize="0.7rem" fontWeight="medium">
+                  {coreLabel(node.runtime_status.actual_core)}
+                </Text>
+              </Badge>
+            )}
             {node.xray_version && (
               <Badge
                 colorScheme="blue"
@@ -173,9 +277,10 @@ const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
                   textTransform="capitalize"
                   fontSize="0.7rem"
                   fontWeight="medium"
-                  letterSpacing="tighter"
                 >
-                  Xray {node.xray_version}
+                  {node.runtime_status?.actual_core
+                    ? node.xray_version
+                    : `Xray ${node.xray_version}`}
                 </Text>
               </Badge>
             )}
@@ -210,6 +315,7 @@ const NodeAccordion: FC<AccordionInboundType> = ({ toggleAccordion, node }) => {
             </Alert>
           )}
         </VStack>
+        <NodeRuntimeSummary node={node} />
         <NodeForm
           form={form}
           mutate={mutate}
@@ -369,12 +475,13 @@ const NodeForm: NodeFormType = ({
 
   return (
     <form
-      onSubmit={form.handleSubmit((v) =>
+      onSubmit={form.handleSubmit((v) => {
+        const { runtime_status, ...body } = v;
         mutate({
-          ...v,
-          inbounds_mode: v.active_inbounds?.length ? "panel" : "legacy",
-        })
-      )}
+          ...body,
+          inbounds_mode: body.active_inbounds?.length ? "panel" : "legacy",
+        });
+      })}
     >
       <VStack>
         {nodeSettings && nodeSettings.certificate && (
@@ -637,14 +744,14 @@ export const NodesDialog: FC = () => {
     <>
       <Modal isOpen={isEditingNodes} onClose={onClose}>
         <ModalOverlay bg="blackAlpha.300" backdropFilter="blur(10px)" />
-        <ModalContent mx="3" w="fit-content" maxW="3xl">
+        <ModalContent mx="3" w="fit-content" maxW="4xl">
           <ModalHeader pt={6}>
             <Icon color="primary">
               <ModalIcon color="white" />
             </Icon>
           </ModalHeader>
           <ModalCloseButton mt={3} />
-          <ModalBody w="440px" pb={6} pt={3}>
+          <ModalBody w={{ base: "calc(100vw - 32px)", md: "620px" }} pb={6} pt={3}>
             <Text mb={3} opacity={0.8} fontSize="sm">
               {t("nodes.title")}
             </Text>
