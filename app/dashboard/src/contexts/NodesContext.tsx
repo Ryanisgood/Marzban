@@ -15,6 +15,8 @@ export const NodeSchema = z.object({
     .number()
     .min(1)
     .or(z.string().transform((v) => parseFloat(v))),
+  active_inbounds: z.array(z.string()).default([]),
+  inbounds_mode: z.enum(["legacy", "panel"]).default("legacy"),
   xray_version: z.string().nullable().optional(),
   id: z.number().nullable().optional(),
   status: z
@@ -33,6 +35,8 @@ export const getNodeDefaultValues = (): NodeType => ({
   address: "",
   port: 62050,
   api_port: 62051,
+  active_inbounds: [],
+  inbounds_mode: "legacy",
   xray_version: "",
   usage_coefficient: 1,
 });

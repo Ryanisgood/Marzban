@@ -28,6 +28,8 @@ import {
   Text,
   Tooltip,
   useToast,
+  Wrap,
+  WrapItem,
   VStack,
 } from "@chakra-ui/react";
 import {
@@ -45,7 +47,7 @@ import {
   useNodes,
   useNodesQuery,
 } from "contexts/NodesContext";
-import { FC, ReactNode, useState } from "react";
+import { FC, ReactNode, useEffect, useMemo, useState } from "react";
 import { Controller, useForm, UseFormReturn } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import {
@@ -61,7 +63,7 @@ import {
   generateErrorMessage,
   generateSuccessMessage,
 } from "utils/toastHandler";
-import { useDashboard } from "../contexts/DashboardContext";
+import { fetchInbounds, useDashboard } from "../contexts/DashboardContext";
 import { DeleteNodeModal } from "./DeleteNodeModal";
 import { DeleteIcon } from "./DeleteUserModal";
 import { ReloadIcon } from "./Filters";
@@ -325,7 +327,20 @@ const NodeForm: NodeFormType = ({
   addAsHost = false,
 }) => {
   const { t } = useTranslation();
+  const { inbounds } = useDashboard();
   const [showCertificate, setShowCertificate] = useState(false);
+  const inboundOptions = useMemo(
+    () =>
+      Array.from(inbounds.entries())
+        .flatMap(([protocol, inboundList]) =>
+          inboundList.map((inbound) => ({
+            ...inbound,
+            protocol,
+          }))
+        )
+        .sort((a, b) => a.tag.localeCompare(b.tag)),
+    [inbounds]
+  );
   const { data: nodeSettings, isLoading: nodeSettingsLoading } = useQuery({
     queryKey: "node-settings",
     queryFn: () =>
@@ -353,7 +368,14 @@ const NodeForm: NodeFormType = ({
   }
 
   return (
-    <form onSubmit={form.handleSubmit((v) => mutate(v))}>
+    <form
+      onSubmit={form.handleSubmit((v) =>
+        mutate({
+          ...v,
+          inbounds_mode: v.active_inbounds?.length ? "panel" : "legacy",
+        })
+      )}
+    >
       <VStack>
         {nodeSettings && nodeSettings.certificate && (
           <Alert status="info" alignItems="start">
@@ -510,6 +532,55 @@ const NodeForm: NodeFormType = ({
             />
           </Box>
         </HStack>
+        <FormControl py={1}>
+          <FormLabel m={0}>{t("nodes.activeInbounds")}</FormLabel>
+          <Text fontSize="xs" color="gray.500" mb={2}>
+            {t("nodes.activeInboundsHint")}
+          </Text>
+          <Controller
+            name="active_inbounds"
+            control={form.control}
+            render={({ field }) => {
+              const selected = field.value || [];
+              return (
+                <Wrap spacing={2}>
+                  {inboundOptions.map((inbound) => {
+                    const isChecked = selected.includes(inbound.tag);
+                    return (
+                      <WrapItem key={inbound.tag}>
+                        <Checkbox
+                          size="sm"
+                          isChecked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              field.onChange([...selected, inbound.tag]);
+                            } else {
+                              field.onChange(
+                                selected.filter((tag) => tag !== inbound.tag)
+                              );
+                            }
+                          }}
+                        >
+                          <HStack spacing={1}>
+                            <Text fontSize="xs">{inbound.tag}</Text>
+                            <Badge fontSize="0.6rem" colorScheme="blue">
+                              {inbound.protocol}
+                            </Badge>
+                          </HStack>
+                        </Checkbox>
+                      </WrapItem>
+                    );
+                  })}
+                </Wrap>
+              );
+            }}
+          />
+          {inboundOptions.length === 0 && (
+            <Text fontSize="xs" color="gray.500">
+              {t("nodes.noInbounds")}
+            </Text>
+          )}
+        </FormControl>
         {addAsHost && (
           <FormControl py={1}>
             <Checkbox {...form.register("add_as_new_host")}>
@@ -542,6 +613,12 @@ export const NodesDialog: FC = () => {
   const { t } = useTranslation();
   const [openAccordions, setOpenAccordions] = useState<any>({});
   const { data: nodes, isLoading } = useNodesQuery();
+
+  useEffect(() => {
+    if (isEditingNodes) {
+      fetchInbounds();
+    }
+  }, [isEditingNodes]);
 
   const onClose = () => {
     setOpenAccordions({});
