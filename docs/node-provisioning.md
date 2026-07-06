@@ -16,6 +16,20 @@ curl -fsSL https://controller.example.com/api/node/install.sh | sudo bash -s -- 
 
 The node service environment does not need `INBOUNDS`. The controller sends the selected inbound tags to the Rust node because the node is created with `inbounds_mode=panel`.
 
+## Inbound Ownership Model
+
+Panel-managed MarzbanX nodes use node-owned inbounds:
+
+- `proxy_inbounds.owner_node_id` records which node owns an inbound.
+- `node_inbounds_association` records which owned inbounds are currently active for that node.
+- The dashboard only offers owned inbounds for a node.
+- The API and runtime reject panel-managed selections that are unowned or owned by another node.
+- `INBOUNDS` on the Rust node remains a legacy/manual fallback only.
+
+This intentionally removes global inbound reuse from the normal Add Node workflow. Users are still maintained at the protocol/account level, but each node gets its own runnable inbound rows and public ports. That makes the controller able to answer simple operational questions such as "what is rn1c1g actually running?" without asking the operator to SSH into the node and inspect environment variables.
+
+Legacy unowned inbound rows can remain in the database for migration or manual nodes, but they are invalid choices for panel-managed nodes. Generated tags matching `node-{id}-{protocol}-{port}` should be backfilled to the matching node when upgrading old data. The generated tag matcher includes HY2/Hysteria2, VLESS, VMess, Shadowsocks, Trojan, and AnyTLS.
+
 ## Controller Settings
 
 Set these on the controller before using the wizard in production:
@@ -37,12 +51,13 @@ XRAY_INSTALL_SCRIPT_URL=https://github.com/XTLS/Xray-install/raw/main/install-re
 The wizard currently supports:
 
 - HY2/Hysteria2
+- AnyTLS
 - VLESS TCP REALITY
 - Shadowsocks TCP
 
 Core selection is deterministic:
 
-- any selected HY2 inbound means `sing-box`;
+- any selected HY2 or AnyTLS inbound means `sing-box`;
 - Xray-only protocols mean `xray`;
 - the Rust node starts one core at a time.
 
@@ -74,6 +89,8 @@ The token is short-lived and one-time use. The database stores only its hash. In
 
 ## Pitfalls From Rollout
 
+- Do not reuse one node's generated inbound on another panel-managed node. Create a new inbound for the target node instead.
+- Do not treat unowned/global inbound rows as normal MarzbanX node choices. They are legacy/manual data unless ownership is explicitly assigned after verification.
 - Do not create DB inbound rows without writing the matching generated inbound to `XRAY_JSON`; users may see a host but the node cannot start the protocol.
 - Do not keep VLESS REALITY placeholder keys. `XRayConfig` only checks that fields exist, so invalid placeholder strings can pass panel validation and then fail at runtime.
 - Do not start both Xray and sing-box on a low-memory node. If HY2 is present, use sing-box for the whole selected inbound set.

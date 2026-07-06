@@ -23,6 +23,7 @@ MarzbanX keeps the Marzban controller model, REST API, dashboard, subscription t
 Recent changes in this fork focus on:
 
 - panel-managed node inbound selection through `node.active_inbounds`;
+- node-owned inbound rows through `proxy_inbounds.owner_node_id`, so a panel-managed node can only select inbounds that belong to that node;
 - Add Node provisioning that generates inbounds, hosts, a panel-mode node, and a one-time install command;
 - deterministic core selection: sing-box for sing-box-only protocols, Xray for Xray-compatible selections;
 - Rust node support for controller-managed inbounds;
@@ -208,6 +209,20 @@ The intended MarzbanX node flow is:
 4. The controller creates generated inbounds, matching hosts, a panel-managed node, and a short-lived install token.
 5. Run the generated command on the new server.
 6. The Rust node installs or uses the required core, starts `marzban-node.service`, and receives active inbound tags from the controller.
+
+### Node-Owned Inbounds
+
+MarzbanX no longer treats global inbound reuse as the normal node-management path. The Add Node wizard creates inbound rows owned by the new node. The dashboard then filters protocol choices to those owned inbounds, and the runtime validates the same rule before starting or restarting a node.
+
+In practical terms:
+
+- users are still managed by protocol, so enabling VLESS/HY2/SS for a user updates that protocol across the selected hosts;
+- a node's runnable protocols come from that node's owned inbound rows;
+- selecting another node's inbound is rejected for panel-managed nodes;
+- unowned inbound rows are legacy/manual migration data and should not be used for normal MarzbanX Add Node flows;
+- the Rust node's `INBOUNDS` environment variable is only for legacy/manual nodes. Panel-managed nodes receive active inbound tags from the controller.
+
+When upgrading older data, generated tags in the form `node-{id}-{protocol}-{port}` are migration candidates for ownership backfill. If the dashboard shows an invalid selected inbound after upgrade, remove that selection and recreate the node protocol through Add Node, or assign `owner_node_id` only after confirming that inbound is truly dedicated to that node.
 
 For production provisioning, configure these controller variables:
 

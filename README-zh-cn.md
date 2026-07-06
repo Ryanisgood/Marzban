@@ -23,6 +23,7 @@ MarzbanX 保留 Marzban 的主控、REST API、Dashboard、订阅模板、用户
 这个 fork 最近的核心修改包括：
 
 - node 支持 `active_inbounds`，主控明确知道每个 node 正在跑哪些 inbound；
+- inbound 行增加 `owner_node_id`，panel-managed node 只能选择属于自己的 inbound；
 - Add Node 向导会自动创建 generated inbounds、hosts、panel-mode node 和一次性安装命令；
 - core 策略确定化：包含 sing-box-only 协议时使用 sing-box，否则使用 Xray；
 - Rust node 支持 controller-managed inbounds；
@@ -58,6 +59,20 @@ MarzbanX 目标流程：
 4. 主控自动创建 generated inbounds、hosts、panel-managed node 和短期 token。
 5. 在新机器执行面板生成的一条命令。
 6. Rust node 安装或使用所需 core，启动 `marzban-node.service`，后续由主控下发 active inbound tags。
+
+### Node-Owned Inbounds
+
+MarzbanX 现在不再把“全局 inbound 复用”作为普通 node 管理方式。Add Node 会给新 node 创建专属 inbound，这些 inbound 通过 `owner_node_id` 归属到该 node。Dashboard 只允许这个 node 选择自己的 inbound，运行时启动/重启 node 前也会做同样校验。
+
+说人话就是：
+
+- 用户仍然按协议维护，比如给用户启用 VLESS、HY2、SS；
+- node 能跑什么协议，取决于这个 node 自己拥有的 inbound；
+- 一个 node 不能再选择另一个 node 的 inbound；
+- 没有 `owner_node_id` 的 inbound 视为旧数据/手动模式迁移数据，不再作为普通 Add Node 流程使用；
+- Rust node 的 `INBOUNDS` 环境变量只保留给 legacy/manual node。Panel-managed node 由主控下发 active inbound tags。
+
+升级旧数据时，形如 `node-{id}-{protocol}-{port}` 的 generated tags 可以被迁移为该 node 的 owned inbound。如果升级后 Dashboard 显示某个已选 inbound 无效，优先移除这个选择并通过 Add Node 重新创建协议；只有确认它确实是该 node 专用 inbound 时，才手动补 `owner_node_id`。
 
 生产环境使用向导前建议配置：
 
