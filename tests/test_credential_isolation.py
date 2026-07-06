@@ -10,6 +10,7 @@ from app.db.models import Proxy, ProxyInbound, User as DBUser
 from app.models.proxy import ProxyTypes
 from app.models.user import UserDataLimitResetStrategy, UserStatus
 from app.xray.config import XRayConfig
+import app.xray.credential_isolation as credential_isolation
 from app.xray.credential_isolation import (
     CredentialDuplicate,
     CredentialKey,
@@ -266,3 +267,21 @@ def test_repair_duplicate_credentials_rotates_all_but_one_user(monkeypatch):
     assert alice.proxies[0].settings["password"] == "same"
     assert bob.proxies[0].settings["password"] != "same"
     assert find_duplicate_credentials([alice, bob]) == []
+
+
+def test_repair_duplicate_credentials_raises_when_rotation_makes_no_progress(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    monkeypatch.setattr(
+        credential_isolation, "_rotate_proxy_credential", lambda proxy: None
+    )
+    alice = _user(
+        1, "alice", proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})]
+    )
+    bob = _user(
+        2, "bob", proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})]
+    )
+
+    with pytest.raises(RuntimeError, match="Unable to repair"):
+        repair_duplicate_credentials([alice, bob])

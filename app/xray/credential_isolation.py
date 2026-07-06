@@ -75,7 +75,7 @@ def repair_duplicate_credentials(users) -> list[str]:
     repaired_usernames: list[str] = []
     users_by_username = {user.username: user for user in users}
 
-    while duplicates := find_duplicate_credentials(users):
+    while duplicates := tuple(find_duplicate_credentials(users)):
         duplicate = duplicates[0]
         keeper = duplicate.users[0]
         repaired_this_round = False
@@ -93,6 +93,11 @@ def repair_duplicate_credentials(users) -> list[str]:
                 break
 
         if not repaired_this_round:
+            raise RuntimeError(
+                "Unable to repair duplicate proxy credentials for "
+                f"{duplicate.key.protocol} inbound {duplicate.key.inbound_tag}"
+            )
+        if tuple(find_duplicate_credentials(users)) == duplicates:
             raise RuntimeError(
                 "Unable to repair duplicate proxy credentials for "
                 f"{duplicate.key.protocol} inbound {duplicate.key.inbound_tag}"
