@@ -389,15 +389,12 @@ def remove_provisioned_node(db: Session, dbnode: DBNode) -> list[str]:
 
 
 def _panel_managed_inbound_tags(db: Session) -> set[str]:
-    rows = (
-        db.query(DBNode)
-        .filter(DBNode.inbounds_mode == NodeInboundsMode.panel)
-        .all()
-    )
     return {
         tag
-        for node in rows
-        for tag in node.active_inbounds
+        for (tag,) in db.query(ProxyInbound.tag)
+        .filter(ProxyInbound.owner_node_id.isnot(None))
+        .all()
+        if tag
     }
 
 

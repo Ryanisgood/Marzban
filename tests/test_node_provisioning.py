@@ -771,7 +771,7 @@ def test_core_config_preserve_check_rejects_missing_panel_inbound():
     db = _db_session()
     dbnode = _db_node(db)
     dbnode.inbounds_mode = NodeInboundsMode.panel
-    inbound = ProxyInbound(tag="node-1-hy2-8443")
+    inbound = ProxyInbound(tag="node-1-hy2-8443", owner_node_id=dbnode.id)
     db.add(inbound)
     db.flush()
     dbnode.active_inbound_objects = [inbound]
@@ -785,6 +785,23 @@ def test_core_config_preserve_check_rejects_missing_panel_inbound():
         assert "panel-managed inbound" in str(exc)
     else:
         raise AssertionError("expected missing panel inbound to be rejected")
+
+
+def test_core_config_preserve_check_rejects_missing_owned_inbound_when_deselected():
+    db = _db_session()
+    dbnode = _db_node(db)
+    dbnode.inbounds_mode = NodeInboundsMode.panel
+    db.add(ProxyInbound(tag="node-1-vless-443", owner_node_id=dbnode.id))
+    db.commit()
+
+    try:
+        validate_core_config_preserves_panel_inbounds(
+            db, {"inbounds": [], "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}]}
+        )
+    except ValueError as exc:
+        assert "node-1-vless-443" in str(exc)
+    else:
+        raise AssertionError("expected missing owned inbound to be rejected")
 
 
 def test_cleanup_orphaned_provisioned_inbounds_removes_generated_tags_without_db_owner():
