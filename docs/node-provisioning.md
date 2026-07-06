@@ -36,13 +36,15 @@ Set these on the controller before using the wizard in production:
 
 ```env
 MARZBAN_NODE_BINARY_URL=https://controller.example.com/downloads/marzban-node
-SING_BOX_INSTALL_SCRIPT_URL=https://controller.example.com/downloads/install-sing-box.sh
+SING_BOX_INSTALL_SCRIPT_URL=https://sing-box.app/install.sh
+SING_BOX_VERSION=1.13.14
+SING_BOX_DOWNLOAD_URL_TEMPLATE=https://github.com/SagerNet/sing-box/releases/download/v{version}/sing-box-{version}-linux-{arch}.tar.gz
 XRAY_INSTALL_SCRIPT_URL=https://github.com/XTLS/Xray-install/raw/main/install-release.sh
 ```
 
 `MARZBAN_NODE_BINARY_URL` should point to the Rust `marzban-node` binary built for the target Linux architecture. A static musl build is preferred when deploying the same binary across small VPS nodes with different libc versions.
 
-`SING_BOX_INSTALL_SCRIPT_URL` is required for HY2 or any HY2 combination unless `sing-box` is already installed on the node. Keep this script under your control or use a reviewed internal mirror. Do not depend on an unreviewed third-party shell script for production rollout.
+`SING_BOX_VERSION` defaults to `1.13.14`. HY2 and AnyTLS Add Node provisioning installs sing-box automatically when it is missing or when the installed version differs from the pinned version. By default the installer downloads the fixed release archive from `SING_BOX_DOWNLOAD_URL_TEMPLATE`; `SING_BOX_INSTALL_SCRIPT_URL` is kept as a fallback or mirror hook. Override these only when the node cannot reach the official endpoint or when you provide an internal reviewed mirror.
 
 `XRAY_INSTALL_SCRIPT_URL` has a default for Xray-only nodes. Override it if the node cannot reach GitHub or if you use an internal package mirror.
 
@@ -78,6 +80,7 @@ The installer:
 
 - reads the install payload without consuming the token;
 - downloads `/usr/local/bin/marzban-node` when `MARZBAN_NODE_BINARY_URL` is configured;
+- installs or corrects sing-box to `SING_BOX_VERSION` for HY2/AnyTLS nodes from the fixed release archive;
 - installs only the required core;
 - writes the controller client certificate to `/var/lib/marzban-node/ssl_client_cert.pem`;
 - generates the node server certificate and private key locally;
@@ -96,7 +99,7 @@ The token is short-lived and one-time use. The database stores only its hash. In
 - Do not start both Xray and sing-box on a low-memory node. If HY2 is present, use sing-box for the whole selected inbound set.
 - Do not rely on `INBOUNDS` for panel-managed nodes. It makes protocol switching and user provisioning harder to reason about.
 - Do not deploy with an empty `MARZBAN_NODE_BINARY_URL` unless the node image already contains `/usr/local/bin/marzban-node`.
-- Do not deploy HY2 with an empty `SING_BOX_INSTALL_SCRIPT_URL` unless the node image already contains `sing-box`.
+- Do not remove both `SING_BOX_DOWNLOAD_URL_TEMPLATE` and `SING_BOX_INSTALL_SCRIPT_URL`; HY2/AnyTLS provisioning needs one install source.
 - If core restart fails during provisioning, the controller restores the previous config file and in-memory config.
 - If a generated install command is lost, create a new node or add a token rotation endpoint later; the plaintext token is intentionally shown only once.
 - If the installer fails after starting the service but before the final consume request, rerunning the command is still idempotent: it rewrites the same env/service files and then consumes the token.

@@ -36,7 +36,18 @@ XRAY_INSTALL_SCRIPT_URL = config(
     "XRAY_INSTALL_SCRIPT_URL",
     default="https://github.com/XTLS/Xray-install/raw/main/install-release.sh",
 )
-SING_BOX_INSTALL_SCRIPT_URL = config("SING_BOX_INSTALL_SCRIPT_URL", default="")
+SING_BOX_INSTALL_SCRIPT_URL = config(
+    "SING_BOX_INSTALL_SCRIPT_URL",
+    default="https://sing-box.app/install.sh",
+)
+SING_BOX_VERSION = config("SING_BOX_VERSION", default="1.13.14")
+SING_BOX_DOWNLOAD_URL_TEMPLATE = config(
+    "SING_BOX_DOWNLOAD_URL_TEMPLATE",
+    default=(
+        "https://github.com/SagerNet/sing-box/releases/download/"
+        "v{version}/sing-box-{version}-linux-{arch}.tar.gz"
+    ),
+)
 XRAY_EXCLUDE_INBOUND_TAGS = config("XRAY_EXCLUDE_INBOUND_TAGS", default='').split()
 XRAY_SUBSCRIPTION_URL_PREFIX = config("XRAY_SUBSCRIPTION_URL_PREFIX", default="").strip("/")
 XRAY_SUBSCRIPTION_PATH = config("XRAY_SUBSCRIPTION_PATH", default="sub").strip("/")

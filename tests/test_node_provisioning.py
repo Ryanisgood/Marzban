@@ -545,7 +545,7 @@ def test_provision_node_requires_binary_url_for_one_command_install():
         raise AssertionError("expected missing binary URL to fail")
 
 
-def test_provision_node_requires_sing_box_install_url_for_hy2():
+def test_provision_node_requires_sing_box_install_source_for_hy2():
     db = _db_session()
     payload = NodeProvisionCreate(
         name="rn1c1g",
@@ -565,11 +565,12 @@ def test_provision_node_requires_sing_box_install_url_for_hy2():
             apply_config=lambda config: None,
             binary_url="https://panel.example.com/download/marzban-node",
             sing_box_install_url="",
+            sing_box_download_url_template="",
         )
     except ValueError as exc:
-        assert "SING_BOX_INSTALL_SCRIPT_URL" in str(exc)
+        assert "SING_BOX_INSTALL_SCRIPT_URL or SING_BOX_DOWNLOAD_URL_TEMPLATE" in str(exc)
     else:
-        raise AssertionError("expected missing sing-box install URL to fail")
+        raise AssertionError("expected missing sing-box install source to fail")
 
 
 def test_provision_node_rejects_service_port_conflict():
@@ -1135,9 +1136,71 @@ def test_redeem_node_install_payload_returns_one_time_config_without_private_key
     assert payload.ssl_client_cert == "controller-public-cert"
     assert payload.binary_url == "https://panel.example.com/download/marzban-node"
     assert payload.core_install_url == "https://panel.example.com/download/install-sing-box.sh"
+    assert payload.core_version == "1.13.14"
+    assert "sing-box-{version}-linux-{arch}.tar.gz" in payload.core_download_url_template
     assert "INBOUNDS" not in payload.env
     assert "controller-private-key" not in payload.model_dump_json()
     assert redeem_node_install_payload(db, token) is None
+
+
+def test_redeem_node_install_payload_uses_configured_sing_box_version():
+    db = _db_session()
+    dbnode = _db_node(db)
+    db.add(TLS(key="controller-private-key", certificate="controller-public-cert"))
+    db.commit()
+    token, _ = create_node_provision_token(
+        db,
+        node_id=dbnode.id,
+        created_by="admin",
+        active_inbounds=["node-1-hy2-8443"],
+        core_kind="sing-box",
+        expires_at=datetime.utcnow() + timedelta(minutes=10),
+    )
+
+    payload = redeem_node_install_payload(
+        db,
+        token,
+        binary_url="https://panel.example.com/download/marzban-node",
+        sing_box_install_url="https://sing-box.app/install.sh",
+        sing_box_version="1.13.14",
+        sing_box_download_url_template=(
+            "https://mirror.example.com/sing-box-{version}-linux-{arch}.tar.gz"
+        ),
+    )
+
+    assert payload is not None
+    assert payload.core_install_url == "https://sing-box.app/install.sh"
+    assert payload.core_version == "1.13.14"
+    assert payload.core_download_url_template == (
+        "https://mirror.example.com/sing-box-{version}-linux-{arch}.tar.gz"
+    )
+
+
+def test_redeem_node_install_payload_omits_core_version_for_xray():
+    db = _db_session()
+    dbnode = _db_node(db)
+    db.add(TLS(key="controller-private-key", certificate="controller-public-cert"))
+    db.commit()
+    token, _ = create_node_provision_token(
+        db,
+        node_id=dbnode.id,
+        created_by="admin",
+        active_inbounds=["node-1-vless-443"],
+        core_kind="xray",
+        expires_at=datetime.utcnow() + timedelta(minutes=10),
+    )
+
+    payload = redeem_node_install_payload(
+        db,
+        token,
+        binary_url="https://panel.example.com/download/marzban-node",
+        xray_install_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh",
+        sing_box_version="1.13.14",
+    )
+
+    assert payload is not None
+    assert payload.core_version == ""
+    assert payload.core_download_url_template == ""
 
 
 def test_redeem_node_install_payload_can_peek_before_consuming_token():
@@ -1290,6 +1353,13 @@ def test_render_node_install_script_requires_token_and_does_not_write_inbounds()
     assert "https://panel.example.com/api/node/provision/redeem" in script
     assert "binary_url" in script
     assert "core_install_url" in script
+    assert "core_version" in script
+    assert "core_download_url_template" in script
+    assert "installed_sing_box_version" in script
+    assert "install_sing_box_release" in script
+    assert "sing-box-{version}-linux-{arch}.tar.gz" not in script
+    assert 'sh -s -- --version "$CORE_VERSION"' in script
+    assert "does not match required" in script
     assert '\\"consume\\":false' in script
     assert '\\"consume\\":true' not in script
     assert "systemctl is-active --quiet marzban-node" in script

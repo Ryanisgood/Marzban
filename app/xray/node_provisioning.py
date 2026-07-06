@@ -26,6 +26,8 @@ from app.models.node_provision import (
 from app.xray.config import XRayConfig
 from config import (
     MARZBAN_NODE_BINARY_URL,
+    SING_BOX_DOWNLOAD_URL_TEMPLATE,
+    SING_BOX_VERSION,
     SING_BOX_INSTALL_SCRIPT_URL,
     XRAY_INSTALL_SCRIPT_URL,
     XRAY_JSON,
@@ -194,6 +196,7 @@ def provision_node(
     binary_url: str = MARZBAN_NODE_BINARY_URL,
     xray_install_url: str = XRAY_INSTALL_SCRIPT_URL,
     sing_box_install_url: str = SING_BOX_INSTALL_SCRIPT_URL,
+    sing_box_download_url_template: str = SING_BOX_DOWNLOAD_URL_TEMPLATE,
 ) -> ProvisionNodeResult:
     specs = payload.inbounds
     core_kind = choose_core_kind([inbound.protocol for inbound in payload.inbounds])
@@ -203,6 +206,7 @@ def provision_node(
         binary_url=binary_url,
         xray_install_url=xray_install_url,
         sing_box_install_url=sing_box_install_url,
+        sing_box_download_url_template=sing_box_download_url_template,
     )
 
     dbnode = DBNode(
@@ -289,6 +293,7 @@ def validate_install_sources(
     binary_url: str,
     xray_install_url: str,
     sing_box_install_url: str,
+    sing_box_download_url_template: str = SING_BOX_DOWNLOAD_URL_TEMPLATE,
 ) -> None:
     if not binary_url:
         raise ValueError(
@@ -298,9 +303,14 @@ def validate_install_sources(
         raise ValueError(
             "XRAY_INSTALL_SCRIPT_URL must be configured for Xray node install"
         )
-    if core_kind == "sing-box" and not sing_box_install_url:
+    if (
+        core_kind == "sing-box"
+        and not sing_box_install_url
+        and not sing_box_download_url_template
+    ):
         raise ValueError(
-            "SING_BOX_INSTALL_SCRIPT_URL must be configured for sing-box node install"
+            "SING_BOX_INSTALL_SCRIPT_URL or SING_BOX_DOWNLOAD_URL_TEMPLATE "
+            "must be configured for sing-box node install"
         )
 
 
@@ -596,6 +606,8 @@ def redeem_node_install_payload(
     binary_url: str = MARZBAN_NODE_BINARY_URL,
     xray_install_url: str = XRAY_INSTALL_SCRIPT_URL,
     sing_box_install_url: str = SING_BOX_INSTALL_SCRIPT_URL,
+    sing_box_version: str = SING_BOX_VERSION,
+    sing_box_download_url_template: str = SING_BOX_DOWNLOAD_URL_TEMPLATE,
     consume: bool = True,
 ) -> NodeInstallPayload | None:
     record = crud.redeem_node_provision_token(db, token) if consume else crud.get_node_provision_token(db, token)
@@ -630,6 +642,10 @@ def redeem_node_install_payload(
         core_install_url=sing_box_install_url
         if record.core_kind == "sing-box"
         else xray_install_url,
+        core_version=sing_box_version if record.core_kind == "sing-box" else "",
+        core_download_url_template=(
+            sing_box_download_url_template if record.core_kind == "sing-box" else ""
+        ),
         env=env,
     )
 
@@ -670,6 +686,51 @@ PAYLOAD="$(curl -fsSL -X POST "{redeem_url}" \\
 BINARY_URL="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("binary_url", ""))' "$PAYLOAD")"
 CORE_KIND="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("core_kind", ""))' "$PAYLOAD")"
 CORE_INSTALL_URL="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("core_install_url", ""))' "$PAYLOAD")"
+CORE_VERSION="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("core_version", ""))' "$PAYLOAD")"
+CORE_DOWNLOAD_URL_TEMPLATE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("core_download_url_template", ""))' "$PAYLOAD")"
+
+installed_sing_box_version() {{
+  if ! command -v sing-box >/dev/null 2>&1; then
+    return 1
+  fi
+  sing-box version 2>/dev/null | awk '
+    /^sing-box version / {{ print $3; exit }}
+    /^sing-box / {{ print $2; exit }}
+  '
+}}
+
+sing_box_download_arch() {{
+  case "$(uname -m)" in
+    x86_64|amd64) echo "amd64" ;;
+    aarch64|arm64) echo "arm64" ;;
+    armv7l|armv7) echo "armv7" ;;
+    *) echo "unsupported architecture: $(uname -m)" >&2; return 1 ;;
+  esac
+}}
+
+install_sing_box_release() {{
+  if [ -z "$CORE_VERSION" ]; then
+    echo "core_version is required for fixed sing-box release install" >&2
+    return 1
+  fi
+  if [ -z "$CORE_DOWNLOAD_URL_TEMPLATE" ]; then
+    return 1
+  fi
+
+  DOWNLOAD_ARCH="$(sing_box_download_arch)"
+  DOWNLOAD_URL="$(python3 -c 'import sys; print(sys.argv[1].format(version=sys.argv[2], arch=sys.argv[3]))' "$CORE_DOWNLOAD_URL_TEMPLATE" "$CORE_VERSION" "$DOWNLOAD_ARCH")"
+  TMP_DIR="$(mktemp -d)"
+  curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/sing-box.tar.gz"
+  tar -xzf "$TMP_DIR/sing-box.tar.gz" -C "$TMP_DIR"
+  SING_BOX_BIN="$(find "$TMP_DIR" -type f -name sing-box | head -n 1)"
+  if [ -z "$SING_BOX_BIN" ]; then
+    echo "sing-box binary was not found in release archive" >&2
+    rm -rf "$TMP_DIR"
+    return 1
+  fi
+  install -m 0755 "$SING_BOX_BIN" /usr/local/bin/sing-box
+  rm -rf "$TMP_DIR"
+}}
 
 if [ -n "$BINARY_URL" ]; then
   curl -fsSL "$BINARY_URL" -o /usr/local/bin/marzban-node
@@ -687,12 +748,35 @@ if [ "$CORE_KIND" = "xray" ] && ! command -v xray >/dev/null 2>&1; then
   bash -c "$(curl -fsSL "$CORE_INSTALL_URL")" @ install
 fi
 
-if [ "$CORE_KIND" = "sing-box" ] && ! command -v sing-box >/dev/null 2>&1; then
-  if [ -z "$CORE_INSTALL_URL" ]; then
-    echo "sing-box is not installed and core_install_url is empty" >&2
+if [ "$CORE_KIND" = "sing-box" ]; then
+  INSTALLED_CORE_VERSION="$(installed_sing_box_version || true)"
+  NEED_CORE_INSTALL=0
+  if [ -z "$INSTALLED_CORE_VERSION" ]; then
+    NEED_CORE_INSTALL=1
+  elif [ -n "$CORE_VERSION" ] && [ "$INSTALLED_CORE_VERSION" != "$CORE_VERSION" ]; then
+    NEED_CORE_INSTALL=1
+  fi
+
+  if [ "$NEED_CORE_INSTALL" -eq 0 ]; then
+    :
+  else
+    if [ -n "$CORE_DOWNLOAD_URL_TEMPLATE" ]; then
+      install_sing_box_release
+    elif [ -z "$CORE_INSTALL_URL" ]; then
+      echo "sing-box is missing or has the wrong version and no install source is configured" >&2
+      exit 2
+    elif [ -n "$CORE_VERSION" ]; then
+      curl -fsSL "$CORE_INSTALL_URL" | sh -s -- --version "$CORE_VERSION"
+    else
+      curl -fsSL "$CORE_INSTALL_URL" | sh
+    fi
+  fi
+
+  INSTALLED_CORE_VERSION="$(installed_sing_box_version || true)"
+  if [ -n "$CORE_VERSION" ] && [ "$INSTALLED_CORE_VERSION" != "$CORE_VERSION" ]; then
+    echo "sing-box version $INSTALLED_CORE_VERSION does not match required $CORE_VERSION" >&2
     exit 2
   fi
-  curl -fsSL "$CORE_INSTALL_URL" | sh
 fi
 
 install -d -m 0755 /var/lib/marzban-node

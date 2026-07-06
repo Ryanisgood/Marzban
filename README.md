@@ -228,17 +228,19 @@ For production provisioning, configure these controller variables:
 
 ```env
 MARZBAN_NODE_BINARY_URL=https://controller.example.com/downloads/marzban-node
-SING_BOX_INSTALL_SCRIPT_URL=https://controller.example.com/downloads/install-sing-box.sh
+SING_BOX_INSTALL_SCRIPT_URL=https://sing-box.app/install.sh
+SING_BOX_VERSION=1.13.14
+SING_BOX_DOWNLOAD_URL_TEMPLATE=https://github.com/SagerNet/sing-box/releases/download/v{version}/sing-box-{version}-linux-{arch}.tar.gz
 XRAY_INSTALL_SCRIPT_URL=https://github.com/XTLS/Xray-install/raw/main/install-release.sh
 ```
 
-`MARZBAN_NODE_BINARY_URL` should point to the Rust `MarzbanX-node` binary built for the target Linux architecture. `SING_BOX_INSTALL_SCRIPT_URL` is required for HY2, AnyTLS, or any sing-box-selected combination unless sing-box is already installed on the node.
+`MARZBAN_NODE_BINARY_URL` should point to the Rust `MarzbanX-node` binary built for the target Linux architecture. `SING_BOX_VERSION` defaults to the pinned stable version `1.13.14`, and `SING_BOX_DOWNLOAD_URL_TEMPLATE` defaults to the official GitHub release archive pattern, so HY2 and AnyTLS Add Node provisioning can install sing-box without extra controller environment configuration. `SING_BOX_INSTALL_SCRIPT_URL` remains available as a fallback or mirror hook.
 
 Before using the Add Node wizard in production:
 
 1. Build or download the `MarzbanX-node` Linux binary.
 2. Host it at the HTTPS URL configured in `MARZBAN_NODE_BINARY_URL`.
-3. Host a reviewed sing-box installer at `SING_BOX_INSTALL_SCRIPT_URL`, or preinstall sing-box on node images.
+3. Override `SING_BOX_DOWNLOAD_URL_TEMPLATE` or `SING_BOX_INSTALL_SCRIPT_URL` only if the node cannot reach the default source or you use an internal reviewed mirror.
 4. Make sure new nodes can reach the controller API over HTTPS.
 5. Open `SERVICE_PORT/tcp`, default `62050`, from the controller to the node.
 6. Open every selected public proxy port, for example `8443/udp` for HY2.
@@ -294,7 +296,9 @@ Most upstream Marzban settings still apply. Important MarzbanX node-related sett
 | Variable | Description |
 | --- | --- |
 | `MARZBAN_NODE_BINARY_URL` | Download URL for the Rust node binary used by the one-command installer. |
-| `SING_BOX_INSTALL_SCRIPT_URL` | Install script URL for sing-box nodes. Required for HY2/AnyTLS provisioning unless sing-box is preinstalled. |
+| `SING_BOX_INSTALL_SCRIPT_URL` | Install script URL for sing-box nodes. Defaults to `https://sing-box.app/install.sh`. |
+| `SING_BOX_VERSION` | Pinned sing-box version required by the one-command installer. Defaults to `1.13.14`. |
+| `SING_BOX_DOWNLOAD_URL_TEMPLATE` | Release archive URL template used before the install script fallback. Supports `{version}` and `{arch}`. |
 | `XRAY_INSTALL_SCRIPT_URL` | Install script URL for Xray nodes. Defaults to the upstream Xray installer. |
 | `XRAY_JSON` | Controller core config file where generated inbounds are written. |
 | `XRAY_EXECUTABLE_PATH` | Local Xray binary path for the controller. |

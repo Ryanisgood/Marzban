@@ -74,4 +74,6 @@ class NodeInstallPayload(BaseModel):
     ssl_client_cert: str
     binary_url: str = ""
     core_install_url: str = ""
+    core_version: str = ""
+    core_download_url_template: str = ""
     env: Dict[str, str]
