@@ -473,6 +473,56 @@ def test_node_inbounds_validation_allows_udp_and_tcp_on_same_port(monkeypatch):
     assert any("reachability" in warning.lower() for warning in warnings)
 
 
+def test_node_inbounds_validation_rejects_cross_owned_inbound(monkeypatch):
+    config = XRayConfig(
+        {
+            "log": {"loglevel": "warning"},
+            "inbounds": [{"tag": "node-2-vless-443", "protocol": "vless", "port": 443}],
+            "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
+        }
+    )
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(
+        operations.xray,
+        "hosts",
+        {"node-2-vless-443": [{"address": "example.com"}]},
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        validate_inbounds_selection(
+            NodeInboundsMode.panel,
+            ["node-2-vless-443"],
+            node_id=1,
+            inbound_owner_ids={"node-2-vless-443": 2},
+        )
+
+    assert getattr(exc_info.value, "status_code") == 400
+    assert "another node" in exc_info.value.detail.lower()
+
+
+def test_node_inbounds_validation_rejects_unowned_inbound_in_panel_mode(monkeypatch):
+    config = XRayConfig(
+        {
+            "log": {"loglevel": "warning"},
+            "inbounds": [{"tag": "VLESS", "protocol": "vless", "port": 443}],
+            "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
+        }
+    )
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(operations.xray, "hosts", {"VLESS": [{"address": "example.com"}]})
+
+    with pytest.raises(Exception) as exc_info:
+        validate_inbounds_selection(
+            NodeInboundsMode.panel,
+            ["VLESS"],
+            node_id=1,
+            inbound_owner_ids={"VLESS": None},
+        )
+
+    assert getattr(exc_info.value, "status_code") == 400
+    assert "not owned" in exc_info.value.detail.lower()
+
+
 def test_node_inbounds_validation_rejects_missing_required_core(monkeypatch):
     config = _config()
     monkeypatch.setattr(operations.xray, "config", config)

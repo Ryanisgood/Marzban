@@ -83,6 +83,17 @@ def get_or_create_inbound(db: Session, inbound_tag: str) -> ProxyInbound:
     return inbound
 
 
+def get_inbound_owner_ids(db: Session, inbound_tags: List[str]) -> Dict[str, Optional[int]]:
+    if not inbound_tags:
+        return {}
+    rows = (
+        db.query(ProxyInbound.tag, ProxyInbound.owner_node_id)
+        .filter(ProxyInbound.tag.in_(inbound_tags))
+        .all()
+    )
+    return {tag: owner_node_id for tag, owner_node_id in rows}
+
+
 def get_hosts(db: Session, inbound_tag: str) -> List[ProxyHost]:
     """
     Retrieves hosts for a given inbound tag.

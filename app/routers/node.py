@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, WebSocket
 from fastapi.responses import PlainTextResponse
@@ -190,6 +190,8 @@ def validate_inbounds_selection(
     *,
     runtime_node=None,
     require_hosts: bool = True,
+    node_id: Optional[int] = None,
+    inbound_owner_ids: Optional[Dict[str, Optional[int]]] = None,
 ):
     if inbounds_mode == NodeInboundsMode.panel and not active_inbounds:
         raise HTTPException(
@@ -199,6 +201,29 @@ def validate_inbounds_selection(
     validate_active_inbounds(active_inbounds)
     if inbounds_mode != NodeInboundsMode.panel:
         return []
+
+    if node_id is not None and inbound_owner_ids is not None:
+        cross_owned = []
+        unowned = []
+        for tag in active_inbounds:
+            owner_id = inbound_owner_ids.get(tag)
+            if owner_id is None:
+                unowned.append(tag)
+            elif owner_id != node_id:
+                cross_owned.append(tag)
+        if cross_owned:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Inbound(s) belong to another node and cannot be enabled here: "
+                    + ", ".join(cross_owned)
+                ),
+            )
+        if unowned:
+            raise HTTPException(
+                status_code=400,
+                detail="Inbound(s) are not owned by this node: " + ", ".join(unowned),
+            )
 
     if require_hosts:
         missing_hosts = [
@@ -259,6 +284,14 @@ def add_node(
     _: Admin = Depends(Admin.check_sudo_admin),
 ):
     """Add a new node to the database and optionally add it as a host."""
+    if new_node.inbounds_mode == NodeInboundsMode.panel or new_node.active_inbounds:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Manual Add Node cannot enable inbounds. "
+                "Use Add Node provisioning to create node-owned inbounds."
+            ),
+        )
     validate_inbounds_selection(
         new_node.inbounds_mode,
         new_node.active_inbounds,
@@ -464,10 +497,13 @@ def modify_node(
         else dbnode.active_inbounds
     )
     inbounds_mode = modified_node.inbounds_mode or dbnode.inbounds_mode
+    owner_ids = crud.get_inbound_owner_ids(db, active_inbounds)
     validate_inbounds_selection(
         inbounds_mode,
         active_inbounds,
         runtime_node=xray.nodes.get(dbnode.id),
+        node_id=dbnode.id,
+        inbound_owner_ids=owner_ids,
     )
 
     updated_node = crud.update_node(db, dbnode, modified_node)
