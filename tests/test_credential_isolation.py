@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 os.environ.setdefault("XRAY_EXECUTABLE_PATH", "/bin/echo")
 
@@ -662,3 +662,27 @@ def test_remove_users_from_runtime_uses_removal_plan_snapshot(
     assert removed_tags == {"VMess", "VLESS", "Trojan", "SS-A", "SS-B", "HY2"}
     assert {email for inbound_tag, email in removed} == {"1.alice"}
     assert restarted == [{"HY2"}]
+
+
+def test_get_autodeletable_expired_users_returns_eligible_users(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        expired = _user(
+            1,
+            "alice",
+            status=UserStatus.expired,
+            proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "gone"})],
+        )
+        expired.last_status_change = datetime.utcnow() - timedelta(days=2)
+        expired.auto_delete_in_days = 1
+        db.add(expired)
+        db.commit()
+
+        users = crud.get_autodeletable_expired_users(db)
+
+        assert [user.username for user in users] == ["alice"]
+    finally:
+        db.close()

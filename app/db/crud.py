@@ -783,6 +783,7 @@ def get_autodeletable_expired_users(
         for (user, auto_delete) in query
         if user.last_status_change + timedelta(days=auto_delete) <= datetime.utcnow()
     ]
+    return expired_users
 
 
 def autodelete_expired_users(db: Session,
