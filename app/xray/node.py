@@ -48,6 +48,7 @@ def config_requires_sing_box(config: XRayConfig):
             and inbound.get("settings", {}).get("version") == 2
             and inbound.get("streamSettings", {}).get("network") == "hysteria"
         )
+        or inbound.get("protocol") == "anytls"
         for inbound in config.get("inbounds", [])
     )
 

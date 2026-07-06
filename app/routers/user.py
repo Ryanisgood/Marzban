@@ -22,8 +22,8 @@ from app.utils import report, responses
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
 
-def _hysteria_reload_inbounds(dbuser) -> set[str]:
-    return xray.operations._hysteria_inbound_tags_from_user(dbuser)
+def _config_reload_inbounds(dbuser) -> set[str]:
+    return xray.operations._config_reload_inbound_tags_from_user(dbuser)
 
 
 @router.post("/user", response_model=UserResponse, responses={400: responses._400, 409: responses._409})
@@ -113,22 +113,22 @@ def modify_user(
             )
 
     old_status = dbuser.status
-    old_hysteria_inbounds = _hysteria_reload_inbounds(dbuser)
+    old_reload_inbounds = _config_reload_inbounds(dbuser)
     dbuser = crud.update_user(db, dbuser, modified_user)
     user = UserResponse.model_validate(dbuser)
-    affected_hysteria_inbounds = old_hysteria_inbounds | _hysteria_reload_inbounds(dbuser)
+    affected_reload_inbounds = old_reload_inbounds | _config_reload_inbounds(dbuser)
 
     if user.status in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(
             xray.operations.update_user,
             dbuser=dbuser,
-            config_reload_inbounds=affected_hysteria_inbounds,
+            config_reload_inbounds=affected_reload_inbounds,
         )
     else:
         bg.add_task(
             xray.operations.remove_user,
             dbuser=dbuser,
-            config_reload_inbounds=affected_hysteria_inbounds,
+            config_reload_inbounds=affected_reload_inbounds,
         )
 
     bg.add_task(report.user_updated, user=user, user_admin=dbuser.admin, by=admin)
@@ -159,12 +159,12 @@ def remove_user(
     admin: Admin = Depends(Admin.get_current),
 ):
     """Remove a user"""
-    affected_hysteria_inbounds = _hysteria_reload_inbounds(dbuser)
+    affected_reload_inbounds = _config_reload_inbounds(dbuser)
     crud.remove_user(db, dbuser)
     bg.add_task(
         xray.operations.remove_user,
         dbuser=dbuser,
-        config_reload_inbounds=affected_hysteria_inbounds,
+        config_reload_inbounds=affected_reload_inbounds,
     )
 
     bg.add_task(

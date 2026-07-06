@@ -24,10 +24,15 @@ def _normalize_core_kind(core_kind: Optional[str]) -> Optional[str]:
 
 
 def _requires_sing_box(inbound: dict) -> bool:
-    return (
+    is_hysteria2 = (
         inbound.get("protocol") == ProxyTypes.Hysteria
         or inbound.get("protocol") == ProxyTypes.Hysteria.value
     ) and inbound.get("network") == "hysteria"
+    is_anytls = inbound.get("protocol") in {
+        ProxyTypes.AnyTLS,
+        ProxyTypes.AnyTLS.value,
+    }
+    return is_hysteria2 or is_anytls
 
 
 def _protocol_value(inbound: dict) -> str:
@@ -46,7 +51,7 @@ def _expected_core_for_inbounds(inbounds: Iterable[dict]) -> tuple[Optional[str]
         if _requires_sing_box(inbound)
     ]
     if sing_box_tags:
-        return "sing-box", f"INBOUNDS contains hysteria2: {', '.join(sing_box_tags)}"
+        return "sing-box", f"INBOUNDS contains sing-box-only protocol: {', '.join(sing_box_tags)}"
 
     return "xray", "All active inbounds are Xray-compatible"
 

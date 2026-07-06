@@ -82,10 +82,15 @@ def test_choose_core_kind_uses_sing_box_when_hy2_is_selected():
     assert choose_core_kind(
         [
             NodeProvisionProtocol.hy2,
+            NodeProvisionProtocol.anytls,
             NodeProvisionProtocol.vless_reality,
             NodeProvisionProtocol.shadowsocks,
         ]
     ) == "sing-box"
+
+
+def test_choose_core_kind_uses_sing_box_when_anytls_is_selected():
+    assert choose_core_kind([NodeProvisionProtocol.anytls]) == "sing-box"
 
 
 def test_choose_core_kind_uses_xray_for_xray_only_protocols():
@@ -102,7 +107,7 @@ def test_install_token_hash_does_not_store_plaintext():
     assert not verify_install_token("other-token", token_hash)
 
 
-def test_build_generated_inbounds_creates_hy2_vless_and_shadowsocks_templates(monkeypatch):
+def test_build_generated_inbounds_creates_hy2_anytls_vless_and_shadowsocks_templates(monkeypatch):
     import app.xray.node_provisioning as provisioning
 
     monkeypatch.setattr(
@@ -114,6 +119,7 @@ def test_build_generated_inbounds_creates_hy2_vless_and_shadowsocks_templates(mo
         node_id=42,
         specs=[
             (NodeProvisionProtocol.hy2, 8443),
+            (NodeProvisionProtocol.anytls, 9443),
             (NodeProvisionProtocol.vless_reality, 443),
             (NodeProvisionProtocol.shadowsocks, 8388),
         ],
@@ -121,21 +127,26 @@ def test_build_generated_inbounds_creates_hy2_vless_and_shadowsocks_templates(mo
 
     assert [item["tag"] for item in inbounds] == [
         "node-42-hy2-8443",
+        "node-42-anytls-9443",
         "node-42-vless-443",
         "node-42-shadowsocks-8388",
     ]
     assert inbounds[0]["protocol"] == "hysteria"
     assert inbounds[0]["settings"]["version"] == 2
     assert inbounds[0]["streamSettings"]["network"] == "hysteria"
-    assert inbounds[1]["protocol"] == "vless"
-    assert inbounds[1]["settings"]["clients"] == []
-    reality_settings = inbounds[1]["streamSettings"]["realitySettings"]
+    assert inbounds[1]["protocol"] == "anytls"
+    assert inbounds[1]["settings"]["users"] == []
+    assert inbounds[1]["streamSettings"]["network"] == "tcp"
+    assert inbounds[1]["streamSettings"]["security"] == "tls"
+    assert inbounds[2]["protocol"] == "vless"
+    assert inbounds[2]["settings"]["clients"] == []
+    reality_settings = inbounds[2]["streamSettings"]["realitySettings"]
     assert reality_settings["privateKey"] == "real-private-key"
     assert reality_settings["publicKey"] == "real-public-key"
     assert reality_settings["dest"] == "www.microsoft.com:443"
     assert reality_settings["serverNames"] == ["www.microsoft.com"]
-    assert inbounds[2]["protocol"] == "shadowsocks"
-    assert inbounds[2]["settings"]["clients"] == []
+    assert inbounds[3]["protocol"] == "shadowsocks"
+    assert inbounds[3]["settings"]["clients"] == []
 
 
 def test_vless_reality_inbound_generation_rejects_missing_x25519_keys(monkeypatch):

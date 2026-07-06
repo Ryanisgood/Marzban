@@ -34,8 +34,12 @@ from config import (
 ProtocolPort = Tuple[NodeProvisionProtocol, int]
 _config_apply_lock = threading.RLock()
 _GENERATED_INBOUND_TAG = re.compile(
-    r"^node-\d+-(hy2|vless|vless-reality|shadowsocks)-\d+$"
+    r"^node-\d+-(hy2|anytls|vless|vless-reality|shadowsocks)-\d+$"
 )
+SING_BOX_ONLY_PROVISION_PROTOCOLS = {
+    NodeProvisionProtocol.hy2,
+    NodeProvisionProtocol.anytls,
+}
 
 
 @dataclass
@@ -49,7 +53,11 @@ class ProvisionNodeResult:
 
 
 def choose_core_kind(protocols: Iterable[NodeProvisionProtocol]) -> str:
-    return "sing-box" if NodeProvisionProtocol.hy2 in set(protocols) else "xray"
+    return (
+        "sing-box"
+        if set(protocols) & SING_BOX_ONLY_PROVISION_PROTOCOLS
+        else "xray"
+    )
 
 
 def hash_install_token(token: str) -> str:
@@ -91,6 +99,23 @@ def _build_inbound(
                 "network": "hysteria",
                 "security": "tls",
                 "tlsSettings": {"alpn": ["h3"], "certificates": []},
+            },
+        }
+
+    if protocol == NodeProvisionProtocol.anytls:
+        return {
+            "tag": tag,
+            "listen": "0.0.0.0",
+            "port": port,
+            "protocol": "anytls",
+            "settings": {"users": []},
+            "streamSettings": {
+                "network": "tcp",
+                "security": "tls",
+                "tlsSettings": {
+                    "alpn": ["h2", "http/1.1"],
+                    "certificates": [],
+                },
             },
         }
 
@@ -182,6 +207,7 @@ def provision_node(
         inbound_rows = []
         for inbound, inbound_spec in zip(generated_inbounds, payload.inbounds):
             inbound_row = ProxyInbound(tag=inbound["tag"])
+            is_sing_box_tls = inbound_spec.protocol in SING_BOX_ONLY_PROVISION_PROTOCOLS
             is_hy2 = inbound_spec.protocol == NodeProvisionProtocol.hy2
             db.add(inbound_row)
             db.add(
@@ -189,7 +215,7 @@ def provision_node(
                     remark=f"{payload.name} ({{USERNAME}}) [{{PROTOCOL}} - {{TRANSPORT}}]",
                     address=payload.address,
                     port=inbound_spec.port,
-                    allowinsecure=True if is_hy2 else None,
+                    allowinsecure=True if is_sing_box_tls else None,
                     alpn="h3" if is_hy2 else None,
                     inbound=inbound_row,
                 )
@@ -250,7 +276,7 @@ def validate_install_sources(
         )
     if core_kind == "sing-box" and not sing_box_install_url:
         raise ValueError(
-            "SING_BOX_INSTALL_SCRIPT_URL must be configured for HY2/sing-box node install"
+            "SING_BOX_INSTALL_SCRIPT_URL must be configured for sing-box node install"
         )
 
 

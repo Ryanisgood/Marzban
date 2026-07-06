@@ -16,6 +16,9 @@ from app.models.user import UserStatus
 from app.utils.crypto import get_cert_SANs
 from config import DEBUG, XRAY_EXCLUDE_INBOUND_TAGS, XRAY_FALLBACKS_INBOUND_TAG
 
+CONFIG_RELOAD_PROXY_TYPES = {ProxyTypes.Hysteria, ProxyTypes.AnyTLS}
+XRAY_UNSUPPORTED_PROXY_TYPES = {ProxyTypes.AnyTLS}
+
 
 def merge_dicts(a, b):  # B will override A dictionary key and values
     for key, value in b.items():
@@ -64,8 +67,10 @@ class XRayConfig(dict):
     def _apply_api(self):
         api_inbound = self.get_inbound("API_INBOUND")
         if api_inbound:
-            api_inbound["listen"] = self.api_host
-            api_inbound["listen"]["address"] = self.api_host
+            if isinstance(api_inbound.get("listen"), dict):
+                api_inbound["listen"]["address"] = self.api_host
+            else:
+                api_inbound["listen"] = self.api_host
             api_inbound["port"] = self.api_port
             return
 
@@ -150,13 +155,16 @@ class XRayConfig(dict):
                     continue
                 if inbound.get('streamSettings', {}).get('network') != 'hysteria':
                     continue
+            elif inbound['protocol'] == ProxyTypes.AnyTLS:
+                if inbound.get('streamSettings', {}).get('security') != 'tls':
+                    continue
 
             if inbound['tag'] in XRAY_EXCLUDE_INBOUND_TAGS:
                 continue
 
             if not inbound.get('settings'):
                 inbound['settings'] = {}
-            users_key = 'users' if inbound['protocol'] == ProxyTypes.Hysteria else 'clients'
+            users_key = 'users' if inbound['protocol'] in CONFIG_RELOAD_PROXY_TYPES else 'clients'
             if not inbound['settings'].get(users_key):
                 inbound['settings'][users_key] = []
 
@@ -373,6 +381,31 @@ class XRayConfig(dict):
     def copy(self):
         return deepcopy(self)
 
+    def xray_core_config(self) -> "XRayConfig":
+        config = self.copy()
+        skipped_tags = set()
+        retained_inbounds = []
+        for inbound in config.get("inbounds", []):
+            try:
+                proxy_type = ProxyTypes(inbound.get("protocol"))
+            except ValueError:
+                proxy_type = None
+            if proxy_type in XRAY_UNSUPPORTED_PROXY_TYPES:
+                skipped_tags.add(inbound.get("tag"))
+                continue
+            retained_inbounds.append(inbound)
+        config["inbounds"] = retained_inbounds
+
+        if skipped_tags:
+            rules = config.get("routing", {}).get("rules")
+            if isinstance(rules, list):
+                config["routing"]["rules"] = [
+                    rule
+                    for rule in rules
+                    if not _rule_references_inbound(rule, skipped_tags)
+                ]
+        return XRayConfig(config, api_host=self.api_host, api_port=self.api_port)
+
     def include_db_users(self) -> XRayConfig:
         config = self.copy()
 
@@ -415,7 +448,7 @@ class XRayConfig(dict):
                     continue
 
                 for inbound in inbounds:
-                    users_key = 'users' if inbound['protocol'] == ProxyTypes.Hysteria else 'clients'
+                    users_key = 'users' if inbound['protocol'] in CONFIG_RELOAD_PROXY_TYPES else 'clients'
                     clients = config.get_inbound(inbound['tag'])['settings'][users_key]
 
                     for row in rows:
@@ -450,3 +483,12 @@ class XRayConfig(dict):
                 f.write(config.to_json(indent=4))
 
         return config
+
+
+def _rule_references_inbound(rule: dict, inbound_tags: set[str]) -> bool:
+    tags = rule.get("inboundTag")
+    if isinstance(tags, str):
+        return tags in inbound_tags
+    if isinstance(tags, list):
+        return any(tag in inbound_tags for tag in tags)
+    return False

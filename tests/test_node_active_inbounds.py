@@ -33,6 +33,17 @@ def _config():
                     "settings": {"version": 2, "users": []},
                     "streamSettings": {"network": "hysteria"},
                 },
+                {
+                    "tag": "AnyTLS",
+                    "protocol": "anytls",
+                    "port": 9443,
+                    "settings": {"users": []},
+                    "streamSettings": {
+                        "network": "tcp",
+                        "security": "tls",
+                        "tlsSettings": {"alpn": ["h2", "http/1.1"]},
+                    },
+                },
                 {"tag": "VLESS", "protocol": "vless", "port": 443},
             ],
             "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
@@ -240,7 +251,7 @@ def test_node_runtime_status_describes_sing_box_strategy(monkeypatch):
 
     assert status.expected_core == "sing-box"
     assert status.actual_core == "xray"
-    assert status.core_reason == "INBOUNDS contains hysteria2: HY2"
+    assert status.core_reason == "INBOUNDS contains sing-box-only protocol: HY2"
     assert status.xray_api_available is False
     assert status.restart_required is True
     assert status.active_inbounds_details[0].tag == "HY2"
@@ -253,6 +264,33 @@ def test_node_runtime_status_describes_sing_box_strategy(monkeypatch):
     assert status.local_listening_ports[0]["port"] == 9443
     assert status.configured_inbound_ports[0]["tag"] == "HY2"
     assert status.last_core_restart_at == 1783030000
+
+
+def test_node_runtime_status_describes_anytls_sing_box_strategy(monkeypatch):
+    config = _config()
+    monkeypatch.setattr(operations.xray, "config", config)
+    monkeypatch.setattr(operations.xray, "hosts", {"AnyTLS": [{"port": 9443}]})
+
+    dbnode = SimpleNamespace(
+        id=2,
+        address="198.51.100.20",
+        inbounds_mode=NodeInboundsMode.panel,
+        active_inbounds=["AnyTLS"],
+    )
+
+    status = build_node_runtime_status(
+        dbnode,
+        runtime_node=SimpleNamespace(
+            last_started_inbounds=["AnyTLS"],
+            core_kind="sing-box",
+            xray_api_available=False,
+        ),
+    )
+
+    assert status.expected_core == "sing-box"
+    assert status.core_reason == "INBOUNDS contains sing-box-only protocol: AnyTLS"
+    assert status.restart_required is False
+    assert status.active_inbounds_details[0].protocol == "anytls"
 
 
 def test_node_runtime_status_describes_xray_strategy(monkeypatch):
@@ -559,4 +597,4 @@ def test_update_user_restarts_nodes_when_hysteria_proxy_was_removed(monkeypatch)
 
     operations.update_user(dbuser)
 
-    assert reloads == [{"HY2"}]
+    assert reloads == [{"HY2", "AnyTLS"}]

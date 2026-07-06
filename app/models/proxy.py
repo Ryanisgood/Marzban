@@ -31,6 +31,7 @@ class ProxyTypes(str, Enum):
     Trojan = "trojan"
     Shadowsocks = "shadowsocks"
     Hysteria = "hysteria"
+    AnyTLS = "anytls"
 
     @property
     def account_model(self):
@@ -44,6 +45,8 @@ class ProxyTypes(str, Enum):
             return ShadowsocksAccount
         if self == self.Hysteria:
             return HysteriaAccount
+        if self == self.AnyTLS:
+            return None
 
     @property
     def settings_model(self):
@@ -57,6 +60,8 @@ class ProxyTypes(str, Enum):
             return ShadowsocksSettings
         if self == self.Hysteria:
             return HysteriaSettings
+        if self == self.AnyTLS:
+            return AnyTLSSettings
 
 
 class ProxySettings(BaseModel, use_enum_values=True):
@@ -106,6 +111,13 @@ class HysteriaSettings(ProxySettings):
 
     def revoke(self):
         self.auth = random_password()
+
+
+class AnyTLSSettings(ProxySettings):
+    password: str = Field(default_factory=random_password)
+
+    def revoke(self):
+        self.password = random_password()
 
 
 class ProxyHostSecurity(str, Enum):

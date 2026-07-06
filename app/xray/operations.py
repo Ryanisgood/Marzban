@@ -8,6 +8,7 @@ from app.db import GetDB, crud
 from app.models.node import NodeInboundsMode, NodeStatus
 from app.models.proxy import ProxyTypes
 from app.models.user import UserResponse
+from app.xray.config import CONFIG_RELOAD_PROXY_TYPES
 from app.utils.concurrency import threaded_function
 from app.xray.node import XRayNode
 from xray_api import XRay as XRayAPI
@@ -60,15 +61,33 @@ def _node_apis_for_inbound(nodes, inbound_tag: str):
             yield api
 
 
-def _hysteria_inbound_tags_from_user(dbuser: "DBUser") -> set[str]:
+def _inbound_uses_xray_api(inbound_tag: str) -> bool:
+    inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
+    try:
+        proxy_type = ProxyTypes(inbound.get("protocol"))
+    except ValueError:
+        return False
+    return proxy_type.account_model is not None
+
+
+def _config_reload_inbound_tags_from_user(dbuser: "DBUser") -> set[str]:
     try:
         user = UserResponse.model_validate(dbuser)
-        return set(user.inbounds.get(ProxyTypes.Hysteria, []))
+        return {
+            tag
+            for proxy_type in CONFIG_RELOAD_PROXY_TYPES
+            for tag in user.inbounds.get(proxy_type, [])
+        }
     except Exception:
         return {
             inbound["tag"]
-            for inbound in xray.config.inbounds_by_protocol.get(ProxyTypes.Hysteria, [])
+            for proxy_type in CONFIG_RELOAD_PROXY_TYPES
+            for inbound in xray.config.inbounds_by_protocol.get(proxy_type, [])
         }
+
+
+def _hysteria_inbound_tags_from_user(dbuser: "DBUser") -> set[str]:
+    return _config_reload_inbound_tags_from_user(dbuser)
 
 
 @threaded_function
@@ -105,8 +124,11 @@ def add_user(dbuser: "DBUser"):
     config_reload_inbounds = set()
 
     for proxy_type, inbound_tags in user.inbounds.items():
-        if proxy_type == ProxyTypes.Hysteria:
+        if proxy_type in CONFIG_RELOAD_PROXY_TYPES:
             config_reload_inbounds.update(inbound_tags)
+        account_model = proxy_type.account_model
+        if account_model is None:
+            continue
         for inbound_tag in inbound_tags:
             inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
 
@@ -114,7 +136,7 @@ def add_user(dbuser: "DBUser"):
                 proxy_settings = user.proxies[proxy_type].dict(no_obj=True)
             except KeyError:
                 pass
-            account = proxy_type.account_model(email=email, **proxy_settings)
+            account = account_model(email=email, **proxy_settings)
 
             # XTLS currently only supports transmission methods of TCP and mKCP
             if getattr(account, 'flow', None) and (
@@ -142,14 +164,16 @@ def remove_user(dbuser: "DBUser", config_reload_inbounds=None):
     email = f"{dbuser.id}.{dbuser.username}"
     if config_reload_inbounds is None:
         config_reload_inbounds = (
-            _hysteria_inbound_tags_from_user(dbuser)
-            if any(proxy.type == ProxyTypes.Hysteria for proxy in dbuser.proxies)
+            _config_reload_inbound_tags_from_user(dbuser)
+            if any(proxy.type in CONFIG_RELOAD_PROXY_TYPES for proxy in dbuser.proxies)
             else set()
         )
     else:
         config_reload_inbounds = set(config_reload_inbounds)
 
     for inbound_tag in xray.config.inbounds_by_tag:
+        if not _inbound_uses_xray_api(inbound_tag):
+            continue
         _remove_user_from_inbound(xray.api, inbound_tag, email)
         for node_api in _node_apis_for_inbound(xray.nodes.values(), inbound_tag):
             _remove_user_from_inbound(node_api, inbound_tag, email)
@@ -162,17 +186,30 @@ def update_user(dbuser: "DBUser", config_reload_inbounds=None):
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
     if config_reload_inbounds is None:
-        config_reload_inbounds = set(user.inbounds.get(ProxyTypes.Hysteria, []))
-        if not config_reload_inbounds and xray.config.inbounds_by_protocol.get(ProxyTypes.Hysteria):
+        config_reload_inbounds = {
+            tag
+            for proxy_type in CONFIG_RELOAD_PROXY_TYPES
+            for tag in user.inbounds.get(proxy_type, [])
+        }
+        has_reload_inbounds = any(
+            xray.config.inbounds_by_protocol.get(proxy_type)
+            for proxy_type in CONFIG_RELOAD_PROXY_TYPES
+        )
+        if not config_reload_inbounds and has_reload_inbounds:
             config_reload_inbounds = {
                 inbound["tag"]
-                for inbound in xray.config.inbounds_by_protocol.get(ProxyTypes.Hysteria, [])
+                for proxy_type in CONFIG_RELOAD_PROXY_TYPES
+                for inbound in xray.config.inbounds_by_protocol.get(proxy_type, [])
             }
     else:
         config_reload_inbounds = set(config_reload_inbounds)
 
     active_inbounds = []
     for proxy_type, inbound_tags in user.inbounds.items():
+        account_model = proxy_type.account_model
+        if account_model is None:
+            active_inbounds.extend(inbound_tags)
+            continue
         for inbound_tag in inbound_tags:
             active_inbounds.append(inbound_tag)
             inbound = xray.config.inbounds_by_tag.get(inbound_tag, {})
@@ -181,7 +218,7 @@ def update_user(dbuser: "DBUser", config_reload_inbounds=None):
                 proxy_settings = user.proxies[proxy_type].dict(no_obj=True)
             except KeyError:
                 pass
-            account = proxy_type.account_model(email=email, **proxy_settings)
+            account = account_model(email=email, **proxy_settings)
 
             # XTLS currently only supports transmission methods of TCP and mKCP
             if getattr(account, 'flow', None) and (
@@ -203,6 +240,8 @@ def update_user(dbuser: "DBUser", config_reload_inbounds=None):
 
     for inbound_tag in xray.config.inbounds_by_tag:
         if inbound_tag in active_inbounds:
+            continue
+        if not _inbound_uses_xray_api(inbound_tag):
             continue
         # remove disabled inbounds
         _remove_user_from_inbound(xray.api, inbound_tag, email)

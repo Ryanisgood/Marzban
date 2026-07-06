@@ -1,7 +1,9 @@
 import os
 import urllib.parse
 from datetime import datetime
+from importlib import import_module
 from ipaddress import IPv4Address
+from types import SimpleNamespace
 
 os.environ.setdefault("XRAY_EXECUTABLE_PATH", "/bin/echo")
 
@@ -15,7 +17,7 @@ from cryptography.x509.oid import NameOID
 from app import xray
 from app.db.models import Proxy, User as DBUser
 import app.models.user as user_models
-from app.models.proxy import HysteriaSettings, ProxyTypes
+from app.models.proxy import AnyTLSSettings, HysteriaSettings, ProxyTypes
 from app.models.user import UserCreate, UserDataLimitResetStrategy, UserStatus
 from app.subscription.clash import ClashMetaConfiguration
 from app.subscription.v2ray import V2rayShareLink
@@ -23,6 +25,8 @@ from app.utils.crypto import get_cert_SANs
 from app.xray import operations
 from app.xray.config import XRayConfig
 from xray_api.types.account import HysteriaAccount
+
+xray_config_module = import_module("app.xray.config")
 
 
 def _base_config(inbound):
@@ -49,6 +53,20 @@ def _hysteria_inbound_with_tag(tag):
     return inbound
 
 
+def _anytls_inbound():
+    return {
+        "tag": "AnyTLS",
+        "protocol": "anytls",
+        "port": 9443,
+        "settings": {"users": []},
+        "streamSettings": {
+            "network": "tcp",
+            "security": "tls",
+            "tlsSettings": {"serverName": "any.example.com"},
+        },
+    }
+
+
 def _dbuser_with_hysteria(auth="secret-auth"):
     return DBUser(
         id=7,
@@ -58,6 +76,18 @@ def _dbuser_with_hysteria(auth="secret-auth"):
         data_limit_reset_strategy=UserDataLimitResetStrategy.no_reset,
         created_at=datetime.utcnow(),
         proxies=[Proxy(type=ProxyTypes.Hysteria, settings={"auth": auth})],
+    )
+
+
+def _dbuser_with_anytls(password="secret-password"):
+    return DBUser(
+        id=8,
+        username="bob",
+        status=UserStatus.active,
+        used_traffic=0,
+        data_limit_reset_strategy=UserDataLimitResetStrategy.no_reset,
+        created_at=datetime.utcnow(),
+        proxies=[Proxy(type=ProxyTypes.AnyTLS, settings={"password": password})],
     )
 
 
@@ -74,6 +104,17 @@ def test_hysteria_settings_create_account_and_revoke_auth():
 
     assert settings.auth
     assert settings.auth != "first-secret"
+
+
+def test_anytls_settings_create_and_revoke_password():
+    settings = AnyTLSSettings(password="first-secret")
+
+    assert settings.password == "first-secret"
+
+    settings.revoke()
+
+    assert settings.password
+    assert settings.password != "first-secret"
 
 
 def test_xray_config_recognizes_hysteria2_inbound_only():
@@ -102,6 +143,26 @@ def test_xray_config_recognizes_hysteria2_inbound_only():
     assert config.inbounds_by_tag["HY2"]["sni"] == ["hy.example.com"]
     assert config.inbounds_by_tag["HY2"]["alpn"] == "h3"
     assert config.get_inbound("HY2")["settings"]["users"] == []
+
+
+def test_xray_config_recognizes_anytls_inbound():
+    config = XRayConfig(_base_config(_anytls_inbound()))
+
+    assert config.inbounds_by_protocol[ProxyTypes.AnyTLS][0]["tag"] == "AnyTLS"
+    assert config.inbounds_by_tag["AnyTLS"]["network"] == "tcp"
+    assert config.inbounds_by_tag["AnyTLS"]["tls"] == "tls"
+    assert config.inbounds_by_tag["AnyTLS"]["sni"] == ["any.example.com"]
+    assert config.get_inbound("AnyTLS")["settings"]["users"] == []
+
+
+def test_xray_core_config_filters_anytls_inbound_from_main_xray():
+    config = XRayConfig(_base_config(_anytls_inbound()))
+
+    xray_config = config.xray_core_config()
+
+    assert "AnyTLS" in config.inbounds_by_tag
+    assert xray_config.get_inbound("AnyTLS") is None
+    assert "AnyTLS" not in xray_config.inbounds_by_tag
 
 
 def test_xray_config_ignores_hysteria_v1_inbound():
@@ -150,6 +211,67 @@ def test_user_create_accepts_hysteria_proxy_and_inbound(monkeypatch):
     assert ProxyTypes.Hysteria in user.proxies
     assert user.proxies[ProxyTypes.Hysteria].auth == "secret-auth"
     assert user.inbounds[ProxyTypes.Hysteria] == ["HY2"]
+
+
+def test_user_create_accepts_anytls_proxy_and_inbound(monkeypatch):
+    config = XRayConfig(_base_config(_anytls_inbound()))
+    monkeypatch.setattr(xray, "config", config)
+
+    user = UserCreate(
+        username="bob",
+        proxies={"anytls": {"password": "secret-password"}},
+        inbounds={"anytls": ["AnyTLS"]},
+    )
+
+    assert ProxyTypes.AnyTLS in user.proxies
+    assert user.proxies[ProxyTypes.AnyTLS].password == "secret-password"
+    assert user.inbounds[ProxyTypes.AnyTLS] == ["AnyTLS"]
+
+
+def test_include_db_users_writes_anytls_users(monkeypatch):
+    config = XRayConfig(_base_config(_anytls_inbound()))
+    dbuser = _dbuser_with_anytls()
+
+    class Query:
+        def join(self, *args, **kwargs):
+            return self
+
+        def outerjoin(self, *args, **kwargs):
+            return self
+
+        def filter(self, *args, **kwargs):
+            return self
+
+        def group_by(self, *args, **kwargs):
+            return self
+
+        def all(self):
+            return [
+                SimpleNamespace(
+                    id=dbuser.id,
+                    username=dbuser.username,
+                    type=ProxyTypes.AnyTLS.value,
+                    settings={"password": "secret-password"},
+                    excluded_inbound_tags=None,
+                )
+            ]
+
+    class DB:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def query(self, *args, **kwargs):
+            return Query()
+
+    monkeypatch.setattr(xray_config_module, "GetDB", lambda: DB())
+
+    generated = config.include_db_users()
+
+    users = generated.get_inbound("AnyTLS")["settings"]["users"]
+    assert users == [{"email": "8.bob", "password": "secret-password"}]
 
 
 def test_hysteria_user_lifecycle_updates_xray_api(monkeypatch):
@@ -240,6 +362,52 @@ def test_hysteria_user_changes_restart_started_nodes_for_sing_box(monkeypatch):
     operations.update_user(_dbuser_with_hysteria(auth="new-secret"))
     operations.remove_user(dbuser)
 
+    assert restarted == [42, 42, 42]
+
+
+def test_anytls_user_changes_restart_started_nodes_without_xray_api(monkeypatch):
+    config = XRayConfig(_base_config(_anytls_inbound()))
+    restarted = []
+    api_calls = []
+
+    class AnyTLSNode:
+        connected = True
+        started = True
+        active_inbounds = ["AnyTLS"]
+
+    class OtherNode:
+        connected = True
+        started = True
+        active_inbounds = ["VLESS"]
+
+    monkeypatch.setattr(xray, "config", config)
+    monkeypatch.setattr(xray, "api", object())
+    monkeypatch.setattr(xray, "nodes", {42: AnyTLSNode(), 43: OtherNode()})
+    monkeypatch.setattr(user_models, "generate_v2ray_links", lambda *args, **kwargs: [])
+    monkeypatch.setattr(user_models, "create_subscription_token", lambda username: "token")
+    monkeypatch.setattr(
+        operations,
+        "_add_user_to_inbound",
+        lambda *args, **kwargs: api_calls.append("add"),
+    )
+    monkeypatch.setattr(
+        operations,
+        "_alter_inbound_user",
+        lambda *args, **kwargs: api_calls.append("alter"),
+    )
+    monkeypatch.setattr(
+        operations,
+        "_remove_user_from_inbound",
+        lambda *args, **kwargs: api_calls.append("remove"),
+    )
+    monkeypatch.setattr(operations, "restart_node", lambda node_id: restarted.append(node_id))
+
+    dbuser = _dbuser_with_anytls()
+    operations.add_user(dbuser)
+    operations.update_user(_dbuser_with_anytls(password="new-secret"))
+    operations.remove_user(dbuser)
+
+    assert api_calls == []
     assert restarted == [42, 42, 42]
 
 

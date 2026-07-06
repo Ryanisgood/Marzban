@@ -8,6 +8,7 @@ from app.models.node import NodeResponse
 
 class NodeProvisionProtocol(str, Enum):
     hy2 = "hy2"
+    anytls = "anytls"
     vless_reality = "vless-reality"
     shadowsocks = "shadowsocks"
 

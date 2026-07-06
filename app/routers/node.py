@@ -41,7 +41,7 @@ router = APIRouter(
     tags=["Node"], prefix="/api", responses={401: responses._401, 403: responses._403}
 )
 
-SING_BOX_SUPPORTED_PROTOCOLS = {"hysteria", "vless", "shadowsocks", "trojan"}
+SING_BOX_SUPPORTED_PROTOCOLS = {"hysteria", "anytls", "vless", "shadowsocks", "trojan"}
 WILDCARD_BINDS = {"0.0.0.0", "::", ""}
 
 
@@ -113,8 +113,13 @@ def _required_core_for_tags(active_inbounds: List[str]) -> str:
         inbound = xray.config.inbounds_by_tag.get(tag)
         if (
             inbound
-            and inbound.get("protocol") == "hysteria"
-            and inbound.get("network") == "hysteria"
+            and (
+                (
+                    inbound.get("protocol") == "hysteria"
+                    and inbound.get("network") == "hysteria"
+                )
+                or inbound.get("protocol") == "anytls"
+            )
         ):
             return "sing-box"
     return "xray"

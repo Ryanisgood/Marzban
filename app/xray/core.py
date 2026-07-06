@@ -122,6 +122,7 @@ class XRayCore:
         if self.started is True:
             raise RuntimeError("Xray is started already")
 
+        config = config.xray_core_config()
         if config.get('log', {}).get('logLevel') in ('none', 'error'):
             config['log']['logLevel'] = 'warning'
 
