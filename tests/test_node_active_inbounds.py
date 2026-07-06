@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -7,11 +8,12 @@ os.environ.setdefault("XRAY_EXECUTABLE_PATH", "/bin/echo")
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.crud import get_node_by_id
 from app.db.models import Node as DBNode, Proxy, ProxyInbound, User as DBUser
-from app.models.node import NodeInboundsMode
+from app.models.node import NodeInboundsMode, NodeStatus
 from app.models.proxy import ProxyTypes
 from app.models.user import UserDataLimitResetStrategy, UserStatus
 from app.routers.node import validate_inbounds_selection
@@ -214,6 +216,156 @@ def test_node_active_inbounds_helper_uses_panel_mode_only():
 
     assert operations._node_active_inbounds(panel_node) == ["VLESS"]
     assert operations._node_active_inbounds(legacy_node) is None
+
+
+def _shared_memory_session():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    return sessionmaker(bind=engine)
+
+
+class _TestGetDB:
+    def __init__(self, Session):
+        self.Session = Session
+        self.db = None
+
+    def __enter__(self):
+        self.db = self.Session()
+        return self.db
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.db.close()
+
+
+class _FakeRuntimeNode:
+    connected = True
+    started = False
+    active_inbounds = None
+
+    def start(self, config):
+        raise AssertionError("start must not be called for invalid panel inbounds")
+
+    def restart(self, config):
+        raise AssertionError("restart must not be called for invalid panel inbounds")
+
+
+def _seed_panel_node_with_inbound(Session, *, owner_node_id=None, attach=True):
+    with Session() as db:
+        node = DBNode(
+            name="n1",
+            address="203.0.113.1",
+            port=62050,
+            api_port=62051,
+            inbounds_mode=NodeInboundsMode.panel,
+        )
+        db.add(node)
+        db.flush()
+        if attach:
+            inbound = ProxyInbound(tag="node-1-vless-443", owner_node_id=owner_node_id)
+            node.active_inbound_objects = [inbound]
+            db.add(inbound)
+        db.commit()
+        return node.id
+
+
+def _wait_for_error_status(Session, node_id):
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        with Session() as db:
+            node = get_node_by_id(db, node_id)
+            if node.status == NodeStatus.error:
+                return node.message or ""
+        time.sleep(0.02)
+    raise AssertionError("node did not enter error status")
+
+
+def test_node_runtime_active_inbounds_rejects_cross_owned_panel_selection():
+    Session = _shared_memory_session()
+    with Session() as db:
+        node = DBNode(
+            name="n1",
+            address="203.0.113.1",
+            port=62050,
+            api_port=62051,
+            inbounds_mode=NodeInboundsMode.panel,
+        )
+        other = DBNode(
+            name="n2",
+            address="203.0.113.2",
+            port=62050,
+            api_port=62051,
+            inbounds_mode=NodeInboundsMode.panel,
+        )
+        db.add_all([node, other])
+        db.flush()
+        inbound = ProxyInbound(tag="node-2-vless-443", owner_node_id=other.id)
+        node.active_inbound_objects = [inbound]
+        db.add(inbound)
+        db.commit()
+
+        with pytest.raises(ValueError) as exc_info:
+            operations.node_runtime_active_inbounds(db, node)
+
+    assert "belongs to another node" in str(exc_info.value).lower()
+
+
+def test_node_runtime_active_inbounds_rejects_unowned_panel_selection():
+    Session = _shared_memory_session()
+    node_id = _seed_panel_node_with_inbound(Session, owner_node_id=None)
+
+    with Session() as db:
+        node = get_node_by_id(db, node_id)
+        with pytest.raises(ValueError) as exc_info:
+            operations.node_runtime_active_inbounds(db, node)
+
+    assert "unowned" in str(exc_info.value).lower()
+
+
+def test_node_runtime_active_inbounds_rejects_empty_panel_selection():
+    Session = _shared_memory_session()
+    node_id = _seed_panel_node_with_inbound(Session, attach=False)
+
+    with Session() as db:
+        node = get_node_by_id(db, node_id)
+        with pytest.raises(ValueError) as exc_info:
+            operations.node_runtime_active_inbounds(db, node)
+
+    assert "at least one" in str(exc_info.value).lower()
+
+
+def test_connect_node_rejects_invalid_reused_panel_node_before_start(monkeypatch):
+    Session = _shared_memory_session()
+    node_id = _seed_panel_node_with_inbound(Session, owner_node_id=None)
+
+    monkeypatch.setattr(operations, "GetDB", lambda: _TestGetDB(Session))
+    operations._connecting_nodes.pop(node_id, None)
+    fake_node = _FakeRuntimeNode()
+    operations.xray.nodes[node_id] = fake_node
+
+    operations.connect_node(node_id, config=_config())
+
+    message = _wait_for_error_status(Session, node_id)
+    assert "unowned" in message.lower()
+
+
+def test_restart_node_rejects_invalid_reused_panel_node_before_restart(monkeypatch):
+    Session = _shared_memory_session()
+    node_id = _seed_panel_node_with_inbound(Session, owner_node_id=None)
+
+    monkeypatch.setattr(operations, "GetDB", lambda: _TestGetDB(Session))
+    operations._connecting_nodes.pop(node_id, None)
+    fake_node = _FakeRuntimeNode()
+    fake_node.connected = True
+    operations.xray.nodes[node_id] = fake_node
+
+    operations.restart_node(node_id, config=_config())
+
+    message = _wait_for_error_status(Session, node_id)
+    assert "unowned" in message.lower()
 
 
 def test_node_runtime_status_describes_sing_box_strategy(monkeypatch):

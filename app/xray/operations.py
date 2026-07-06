@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy.exc import SQLAlchemyError
 
 from app import logger, xray
-from app.db import GetDB, crud
+from app.db import GetDB, Session, crud
 from app.models.node import NodeInboundsMode, NodeStatus
 from app.models.proxy import ProxyTypes
 from app.models.user import UserResponse
@@ -28,6 +28,38 @@ def get_tls():
             "key": tls.key,
             "certificate": tls.certificate
         }
+
+
+def node_runtime_active_inbounds(db: Session, dbnode: "DBNode") -> list[str] | None:
+    if dbnode.inbounds_mode != NodeInboundsMode.panel:
+        return None
+
+    tags = dbnode.active_inbounds
+    if not tags:
+        raise ValueError(f"Panel node {dbnode.id} must have at least one owned inbound")
+
+    owner_ids = crud.get_inbound_owner_ids(db, tags)
+    cross_owned = []
+    unowned = []
+    for tag in tags:
+        owner_id = owner_ids.get(tag)
+        if owner_id is None:
+            unowned.append(tag)
+        elif owner_id != dbnode.id:
+            cross_owned.append(tag)
+
+    if cross_owned:
+        raise ValueError(
+            f"Panel node {dbnode.id} cannot run inbound(s) that belongs to another node: "
+            + ", ".join(cross_owned)
+        )
+    if unowned:
+        raise ValueError(
+            f"Panel node {dbnode.id} cannot run unowned inbound(s): "
+            + ", ".join(unowned)
+        )
+
+    return tags
 
 
 def _node_active_inbounds(dbnode: "DBNode"):
@@ -275,17 +307,19 @@ def remove_node(node_id: int):
                 pass
 
 
-def add_node(dbnode: "DBNode"):
+def add_node(dbnode: "DBNode", active_inbounds=None):
     remove_node(dbnode.id)
 
     tls = get_tls()
+    if active_inbounds is None:
+        active_inbounds = _node_active_inbounds(dbnode)
     xray.nodes[dbnode.id] = XRayNode(address=dbnode.address,
                                      port=dbnode.port,
                                      api_port=dbnode.api_port,
                                      ssl_key=tls['key'],
                                      ssl_cert=tls['certificate'],
                                      usage_coefficient=dbnode.usage_coefficient,
-                                     active_inbounds=_node_active_inbounds(dbnode))
+                                     active_inbounds=active_inbounds)
 
     return xray.nodes[dbnode.id]
 
@@ -317,17 +351,23 @@ def connect_node(node_id, config=None):
     if _connecting_nodes.get(node_id):
         return
 
-    with GetDB() as db:
-        dbnode = crud.get_node_by_id(db, node_id)
-
-    if not dbnode:
+    try:
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if not dbnode:
+                return
+            active_inbounds = node_runtime_active_inbounds(db, dbnode)
+    except Exception as e:
+        _change_node_status(node_id, NodeStatus.error, message=str(e))
+        logger.info(f"Unable to connect to node {node_id}")
         return
 
     try:
         node = xray.nodes[dbnode.id]
         assert node.connected
+        node.active_inbounds = active_inbounds
     except (KeyError, AssertionError):
-        node = xray.operations.add_node(dbnode)
+        node = xray.operations.add_node(dbnode, active_inbounds=active_inbounds)
 
     try:
         _connecting_nodes[node_id] = True
@@ -358,17 +398,22 @@ def connect_node(node_id, config=None):
 
 @threaded_function
 def restart_node(node_id, config=None):
-    with GetDB() as db:
-        dbnode = crud.get_node_by_id(db, node_id)
-
-    if not dbnode:
+    try:
+        with GetDB() as db:
+            dbnode = crud.get_node_by_id(db, node_id)
+            if not dbnode:
+                return
+            active_inbounds = node_runtime_active_inbounds(db, dbnode)
+    except Exception as e:
+        _change_node_status(node_id, NodeStatus.error, message=str(e))
+        logger.info(f"Unable to restart node {node_id}")
         return
 
     try:
         node = xray.nodes[dbnode.id]
-        node.active_inbounds = _node_active_inbounds(dbnode)
+        node.active_inbounds = active_inbounds
     except KeyError:
-        node = xray.operations.add_node(dbnode)
+        node = xray.operations.add_node(dbnode, active_inbounds=active_inbounds)
 
     if not node.connected:
         return connect_node(node_id, config)
