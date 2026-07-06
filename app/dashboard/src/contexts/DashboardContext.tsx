@@ -32,6 +32,7 @@ export type InboundType = {
   network: string;
   tls: string;
   port?: number;
+  owner_node_id?: number | null;
 };
 export type Inbounds = Map<ProtocolType, InboundType[]>;
 

@@ -52,7 +52,7 @@ import {
   useNodes,
   useNodesQuery,
 } from "contexts/NodesContext";
-import { FC, ReactNode, useEffect, useMemo, useState } from "react";
+import { FC, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Controller, useForm, UseFormReturn } from "react-hook-form";
 import CopyToClipboard from "react-copy-to-clipboard";
 import { useTranslation } from "react-i18next";
@@ -956,7 +956,11 @@ const NodeForm: NodeFormType = ({
   const { t } = useTranslation();
   const { inbounds } = useDashboard();
   const [showCertificate, setShowCertificate] = useState(false);
-  const inboundOptions = useMemo(
+  const currentNodeId = form.watch("id");
+  const selectedActiveInbounds = form.watch("active_inbounds") || [];
+  const isEditingExistingNode = Boolean(currentNodeId);
+  const initialInboundsModeRef = useRef(form.getValues("inbounds_mode"));
+  const allInboundOptions = useMemo(
     () =>
       Array.from(inbounds.entries())
         .flatMap(([protocol, inboundList]) =>
@@ -967,6 +971,20 @@ const NodeForm: NodeFormType = ({
         )
         .sort((a, b) => a.tag.localeCompare(b.tag)),
     [inbounds]
+  );
+  const inboundOptions = useMemo(
+    () =>
+      allInboundOptions.filter(
+        (inbound) => currentNodeId && inbound.owner_node_id === currentNodeId
+      ),
+    [allInboundOptions, currentNodeId]
+  );
+  const invalidSelectedInbounds = useMemo(
+    () =>
+      selectedActiveInbounds.filter(
+        (tag) => !inboundOptions.some((inbound) => inbound.tag === tag)
+      ),
+    [selectedActiveInbounds, inboundOptions]
   );
   const { data: nodeSettings, isLoading: nodeSettingsLoading } = useQuery({
     queryKey: "node-settings",
@@ -998,9 +1016,15 @@ const NodeForm: NodeFormType = ({
     <form
       onSubmit={form.handleSubmit((v) => {
         const { runtime_status, ...body } = v;
+        const resolvedInboundsMode =
+          isEditingExistingNode && initialInboundsModeRef.current === "panel"
+            ? "panel"
+            : body.active_inbounds?.length
+              ? "panel"
+              : "legacy";
         mutate({
           ...body,
-          inbounds_mode: body.active_inbounds?.length ? "panel" : "legacy",
+          inbounds_mode: resolvedInboundsMode,
         });
       })}
     >
@@ -1165,45 +1189,80 @@ const NodeForm: NodeFormType = ({
           <Text fontSize="xs" color="gray.500" mb={2}>
             {t("nodes.activeInboundsHint")}
           </Text>
-          <Controller
-            name="active_inbounds"
-            control={form.control}
-            render={({ field }) => {
-              const selected = field.value || [];
-              return (
-                <Wrap spacing={2}>
-                  {inboundOptions.map((inbound) => {
-                    const isChecked = selected.includes(inbound.tag);
-                    return (
-                      <WrapItem key={inbound.tag}>
-                        <Checkbox
-                          size="sm"
-                          isChecked={isChecked}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              field.onChange([...selected, inbound.tag]);
-                            } else {
-                              field.onChange(
-                                selected.filter((tag) => tag !== inbound.tag)
-                              );
-                            }
-                          }}
-                        >
-                          <HStack spacing={1}>
-                            <Text fontSize="xs">{inbound.tag}</Text>
-                            <Badge fontSize="0.6rem" colorScheme="blue">
-                              {inbound.protocol}
-                            </Badge>
-                          </HStack>
-                        </Checkbox>
-                      </WrapItem>
-                    );
-                  })}
-                </Wrap>
-              );
-            }}
-          />
-          {inboundOptions.length === 0 && (
+          {invalidSelectedInbounds.length > 0 && (
+            <Alert status="warning" alignItems="start" mb={2}>
+              <AlertIcon />
+              <AlertDescription>
+                <VStack align="start" spacing={2}>
+                  <Text fontSize="xs">
+                    {t("nodes.invalidOwnedInbounds", {
+                      tags: invalidSelectedInbounds.join(", "),
+                    })}
+                  </Text>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      form.setValue(
+                        "active_inbounds",
+                        selectedActiveInbounds.filter(
+                          (tag) => !invalidSelectedInbounds.includes(tag)
+                        ),
+                        { shouldDirty: true, shouldValidate: true }
+                      )
+                    }
+                  >
+                    {t("nodes.removeInvalidInbounds")}
+                  </Button>
+                </VStack>
+              </AlertDescription>
+            </Alert>
+          )}
+          {!currentNodeId ? (
+            <Text fontSize="xs" color="gray.500">
+              {t("nodes.manualNodeLegacyOnly")}
+            </Text>
+          ) : (
+            <Controller
+              name="active_inbounds"
+              control={form.control}
+              render={({ field }) => {
+                const selected = field.value || [];
+                return (
+                  <Wrap spacing={2}>
+                    {inboundOptions.map((inbound) => {
+                      const isChecked = selected.includes(inbound.tag);
+                      return (
+                        <WrapItem key={inbound.tag}>
+                          <Checkbox
+                            size="sm"
+                            isChecked={isChecked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                field.onChange([...selected, inbound.tag]);
+                              } else {
+                                field.onChange(
+                                  selected.filter((tag) => tag !== inbound.tag)
+                                );
+                              }
+                            }}
+                          >
+                            <HStack spacing={1}>
+                              <Text fontSize="xs">{inbound.tag}</Text>
+                              <Badge fontSize="0.6rem" colorScheme="blue">
+                                {inbound.protocol}
+                              </Badge>
+                            </HStack>
+                          </Checkbox>
+                        </WrapItem>
+                      );
+                    })}
+                  </Wrap>
+                );
+              }}
+            />
+          )}
+          {currentNodeId && inboundOptions.length === 0 && (
             <Text fontSize="xs" color="gray.500">
               {t("nodes.noInbounds")}
             </Text>
