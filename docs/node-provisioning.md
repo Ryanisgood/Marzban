@@ -20,7 +20,7 @@ The node service environment does not need `INBOUNDS`. The controller sends the 
 
 Panel-managed MarzbanX nodes use node-owned inbounds:
 
-- `proxy_inbounds.owner_node_id` records which node owns an inbound.
+- `inbounds.owner_node_id` records which node owns an inbound.
 - `node_inbounds_association` records which owned inbounds are currently active for that node.
 - The dashboard only offers owned inbounds for a node.
 - The API and runtime reject panel-managed selections that are unowned or owned by another node.

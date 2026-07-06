@@ -3,17 +3,18 @@ from datetime import datetime, timedelta
 
 os.environ.setdefault("XRAY_EXECUTABLE_PATH", "/bin/echo")
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app.db.base import Base
-from app.db.models import Node as DBNode, NodeProvisionToken, ProxyInbound, TLS
-from app.db.models import ProxyHost
+from app.db.models import Node as DBNode, NodeProvisionToken, Proxy, ProxyInbound, TLS
+from app.db.models import ProxyHost, UserTemplate
 from app.db.crud import create_node_provision_token, redeem_node_provision_token
 from app.db import crud
 from app.models.node import NodeInboundsMode
 from app.models.node_provision import NodeProvisionCreate, NodeProvisionInbound
 from app.models.node_provision import NodeProvisionProtocol, NodeProvisionRedeemRequest
+from app.models.proxy import ProxyTypes
 from app.routers.node import redeem_node_provision
 from app.xray.config import XRayConfig
 from app.xray.node_provisioning import (
@@ -59,6 +60,18 @@ def test_node_provision_create_rejects_duplicate_protocol_port():
 
 def _db_session():
     engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    return Session()
+
+
+def _fk_db_session():
+    engine = create_engine("sqlite:///:memory:")
+
+    @event.listens_for(engine, "connect")
+    def _enable_foreign_keys(connection, _):
+        connection.execute("PRAGMA foreign_keys=ON")
+
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     return Session()
@@ -1278,6 +1291,49 @@ def test_remove_provisioned_node_removes_owned_inbounds_even_when_deselected(mon
     applied_tags = [inbound["tag"] for inbound in applied[-1]["inbounds"]]
     assert "node-1-vless-443" not in applied_tags
     assert "node-2-vless-443" in applied_tags
+
+
+def test_remove_provisioned_node_removes_owned_inbound_references_with_foreign_keys(monkeypatch):
+    from app import xray
+    import app.xray.node_provisioning as provisioning
+
+    db = _fk_db_session()
+    dbnode = _db_node(db)
+    dbnode.inbounds_mode = NodeInboundsMode.panel
+    inbound = ProxyInbound(tag="node-1-vless-443", owner_node_id=dbnode.id)
+    db.add(inbound)
+    db.flush()
+    db.add(
+        ProxyHost(
+            remark="node host",
+            address="node.example.com",
+            inbound=inbound,
+        )
+    )
+    proxy = Proxy(type=ProxyTypes.VLESS, settings={})
+    proxy.excluded_inbounds = [inbound]
+    template = UserTemplate(name="template-1")
+    template.inbounds = [inbound]
+    db.add_all([proxy, template])
+    db.commit()
+    xray.config = XRayConfig(
+        {
+            "inbounds": [
+                {"tag": "node-1-vless-443", "protocol": "vless", "port": 443},
+            ],
+            "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+        }
+    )
+    applied = []
+    monkeypatch.setattr(provisioning, "_apply_provisioned_config", applied.append)
+
+    removed = remove_provisioned_node(db, dbnode)
+
+    assert removed == ["node-1-vless-443"]
+    assert db.query(ProxyInbound).filter_by(tag="node-1-vless-443").first() is None
+    assert db.query(ProxyHost).filter_by(inbound_tag="node-1-vless-443").count() == 0
+    assert proxy.excluded_inbounds == []
+    assert template.inbounds == []
 
 
 def test_remove_node_revokes_pending_provision_tokens():

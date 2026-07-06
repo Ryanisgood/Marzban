@@ -31,6 +31,9 @@ from app.db.models import (
     User,
     UserTemplate,
     UserUsageResetLogs,
+    excluded_inbounds_association,
+    node_inbounds_association,
+    template_inbounds_association,
 )
 from app.models.admin import AdminCreate, AdminModify, AdminPartialModify
 from app.models.node import NodeCreate, NodeModify, NodeStatus, NodeUsageResponse
@@ -1464,17 +1467,20 @@ def remove_node(
     )
     if remove_inbound_tags:
         tags_to_remove = set(remove_inbound_tags)
-        dbnode.active_inbound_objects = [
-            inbound
-            for inbound in dbnode.active_inbound_objects
-            if inbound.tag not in tags_to_remove
-        ]
-        db.flush()
-        (
-            db.query(ProxyInbound)
-            .filter(ProxyInbound.tag.in_(tags_to_remove))
-            .delete(synchronize_session=False)
-        )
+        for association in (
+            node_inbounds_association,
+            excluded_inbounds_association,
+            template_inbounds_association,
+        ):
+            db.execute(
+                delete(association).where(association.c.inbound_tag.in_(tags_to_remove))
+            )
+        db.query(ProxyHost).filter(
+            ProxyHost.inbound_tag.in_(tags_to_remove)
+        ).delete(synchronize_session=False)
+        db.query(ProxyInbound).filter(
+            ProxyInbound.tag.in_(tags_to_remove)
+        ).delete(synchronize_session=False)
     db.delete(dbnode)
     db.commit()
     return dbnode

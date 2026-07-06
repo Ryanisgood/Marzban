@@ -23,7 +23,7 @@ MarzbanX keeps the Marzban controller model, REST API, dashboard, subscription t
 Recent changes in this fork focus on:
 
 - panel-managed node inbound selection through `node.active_inbounds`;
-- node-owned inbound rows through `proxy_inbounds.owner_node_id`, so a panel-managed node can only select inbounds that belong to that node;
+- node-owned inbound rows through `inbounds.owner_node_id`, so a panel-managed node can only select inbounds that belong to that node;
 - Add Node provisioning that generates inbounds, hosts, a panel-mode node, and a one-time install command;
 - deterministic core selection: sing-box for sing-box-only protocols, Xray for Xray-compatible selections;
 - Rust node support for controller-managed inbounds;
