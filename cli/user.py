@@ -6,6 +6,11 @@ from rich.table import Table
 from app.db import GetDB, crud
 from app.db.models import User
 from app.utils.system import readable_size
+from app.xray.credential_isolation import (
+    credential_fingerprint,
+    find_duplicate_credentials,
+    repair_duplicate_credentials,
+)
 
 from . import utils
 
@@ -82,3 +87,55 @@ def set_owner(
         crud.set_owner(db, user, dbadmin)
 
         utils.success(f'{username}\'s owner successfully set to "{admin}".')
+
+
+@app.command(name="audit-credentials")
+def audit_credentials():
+    """Lists duplicate runnable proxy credentials by protocol and inbound."""
+    with GetDB() as db:
+        users = crud.get_users(db=db)
+        duplicates = find_duplicate_credentials(users)
+        if not duplicates:
+            utils.success("No duplicate runnable proxy credentials found.")
+
+        utils.print_table(
+            table=Table(
+                "Protocol", "Inbound", "Credential Fingerprint", "Users"
+            ),
+            rows=[
+                (
+                    duplicate.key.protocol,
+                    duplicate.key.inbound_tag,
+                    credential_fingerprint(duplicate.key.credential),
+                    ", ".join(duplicate.users),
+                )
+                for duplicate in duplicates
+            ],
+        )
+
+
+@app.command(name="repair-credentials")
+def repair_credentials(
+    yes_to_all: bool = typer.Option(
+        False,
+        *utils.FLAGS["yes_to_all"],
+        help="Skips confirmations",
+    ),
+):
+    """Rotates duplicate runnable proxy credentials. Repaired users must re-pull subscriptions."""
+    with GetDB() as db:
+        users = crud.get_users(db=db)
+        duplicates = find_duplicate_credentials(users)
+        if not duplicates:
+            utils.success("No duplicate runnable proxy credentials found.")
+
+        if not yes_to_all and not typer.confirm(
+            "Rotate duplicate credentials for all but one user in each group?"
+        ):
+            utils.error("Aborted.")
+
+        repaired = repair_duplicate_credentials(users)
+        db.commit()
+        utils.success(
+            "Rotated credentials for: " + ", ".join(sorted(set(repaired)))
+        )

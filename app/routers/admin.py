@@ -10,6 +10,7 @@ from app.dependencies import get_admin_by_username, validate_admin
 from app.models.admin import Admin, AdminCreate, AdminModify, Token
 from app.utils import report, responses
 from app.utils.jwt import create_admin_token
+from app.xray.credential_isolation import CredentialConflictError
 from config import LOGIN_NOTIFY_WHITE_LIST
 
 router = APIRouter(tags=["Admin"], prefix="/api", responses={401: responses._401})
@@ -149,13 +150,17 @@ def disable_all_active_users(
     return {"detail": "Users successfully disabled"}
 
 
-@router.post("/admin/{username}/users/activate", responses={403: responses._403, 404: responses._404})
+@router.post("/admin/{username}/users/activate", responses={403: responses._403, 404: responses._404, 409: responses._409})
 def activate_all_disabled_users(
     dbadmin: Admin = Depends(get_admin_by_username),
     db: Session = Depends(get_db), admin: Admin = Depends(Admin.check_sudo_admin)
 ):
     """Activate all disabled users under a specific admin"""
-    crud.activate_all_disabled_users(db=db, admin=dbadmin)
+    try:
+        crud.activate_all_disabled_users(db=db, admin=dbadmin)
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
     startup_config = xray.config.include_db_users()
     xray.core.restart(startup_config)
     for node_id, node in list(xray.nodes.items()):

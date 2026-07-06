@@ -1,0 +1,688 @@
+import os
+from datetime import datetime, timedelta
+
+os.environ.setdefault("XRAY_EXECUTABLE_PATH", "/bin/echo")
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app import xray
+from app.db import crud
+from app.db.base import Base
+from app.db.models import NextPlan, Proxy, ProxyInbound, User as DBUser
+from app.models.proxy import ProxyTypes
+from app.models.user import (
+    UserCreate,
+    UserDataLimitResetStrategy,
+    UserStatus,
+)
+from app.xray.config import XRayConfig
+from app.xray import operations
+import app.xray.credential_isolation as credential_isolation
+from app.xray.credential_isolation import (
+    CredentialDuplicate,
+    CredentialConflictError,
+    CredentialKey,
+    credential_keys_for_user,
+    find_duplicate_credentials,
+    build_user_removal_plan,
+    repair_duplicate_credentials,
+    validate_unique_credentials,
+)
+
+
+def _config():
+    return XRayConfig(
+        {
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                {"tag": "VMess", "protocol": "vmess", "port": 1001},
+                {"tag": "VLESS", "protocol": "vless", "port": 1002},
+                {"tag": "Trojan", "protocol": "trojan", "port": 1003},
+                {
+                    "tag": "SS-A",
+                    "protocol": "shadowsocks",
+                    "port": 1004,
+                    "settings": {"clients": []},
+                },
+                {
+                    "tag": "SS-B",
+                    "protocol": "shadowsocks",
+                    "port": 1005,
+                    "settings": {"clients": []},
+                },
+                {
+                    "tag": "HY2",
+                    "protocol": "hysteria",
+                    "port": 1006,
+                    "settings": {"version": 2, "users": []},
+                    "streamSettings": {"network": "hysteria"},
+                },
+                {
+                    "tag": "AnyTLS",
+                    "protocol": "anytls",
+                    "port": 1007,
+                    "settings": {"users": []},
+                    "streamSettings": {
+                        "network": "tcp",
+                        "security": "tls",
+                        "tlsSettings": {},
+                    },
+                },
+            ],
+            "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
+        }
+    )
+
+
+def _user(user_id, username, status=UserStatus.active, proxies=None):
+    dbuser = DBUser(
+        id=user_id,
+        username=username,
+        status=status,
+        used_traffic=0,
+        data_limit_reset_strategy=UserDataLimitResetStrategy.no_reset,
+        created_at=datetime.utcnow(),
+        proxies=proxies or [],
+    )
+    for proxy in dbuser.proxies:
+        proxy.user = dbuser
+    return dbuser
+
+
+def _proxy(proxy_type, settings, excluded=()):
+    proxy = Proxy(type=proxy_type, settings=settings)
+    proxy.excluded_inbounds = [ProxyInbound(tag=tag) for tag in excluded]
+    return proxy
+
+
+def _db_session():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    return Session()
+
+
+def _user_create(username, proxy_type, settings, status=UserStatus.active):
+    inbound_tags = [
+        inbound["tag"]
+        for inbound in _config().inbounds_by_protocol[proxy_type]
+    ]
+    return UserCreate(
+        username=username,
+        status=status,
+        proxies={proxy_type: settings},
+        inbounds={proxy_type: inbound_tags},
+    )
+
+
+def test_credential_keys_include_effective_inbound_and_protocol_credentials(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    user = _user(
+        1,
+        "alice",
+        proxies=[
+            _proxy(
+                ProxyTypes.VMess,
+                {"id": "11111111-1111-1111-1111-111111111111"},
+            ),
+            _proxy(
+                ProxyTypes.VLESS,
+                {"id": "22222222-2222-2222-2222-222222222222"},
+            ),
+            _proxy(ProxyTypes.Trojan, {"password": "trojan-secret"}),
+            _proxy(
+                ProxyTypes.Shadowsocks,
+                {"method": "chacha20-ietf-poly1305", "password": "ss-secret"},
+                excluded=("SS-B",),
+            ),
+            _proxy(ProxyTypes.Hysteria, {"auth": "hy2-secret"}),
+            _proxy(ProxyTypes.AnyTLS, {"password": "anytls-secret"}),
+        ],
+    )
+
+    keys = set(credential_keys_for_user(user))
+
+    assert (
+        CredentialKey(
+            "vmess", "VMess", "11111111-1111-1111-1111-111111111111"
+        )
+        in keys
+    )
+    assert (
+        CredentialKey(
+            "vless", "VLESS", "22222222-2222-2222-2222-222222222222"
+        )
+        in keys
+    )
+    assert CredentialKey("trojan", "Trojan", "trojan-secret") in keys
+    assert (
+        CredentialKey(
+            "shadowsocks", "SS-A", "chacha20-ietf-poly1305:ss-secret"
+        )
+        in keys
+    )
+    assert (
+        CredentialKey(
+            "shadowsocks", "SS-B", "chacha20-ietf-poly1305:ss-secret"
+        )
+        not in keys
+    )
+    assert CredentialKey("hysteria", "HY2", "hy2-secret") in keys
+    assert CredentialKey("anytls", "AnyTLS", "anytls-secret") in keys
+
+
+def test_duplicate_detection_is_runnable_and_inbound_scoped(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1,
+        "alice",
+        proxies=[
+            _proxy(ProxyTypes.Hysteria, {"auth": "shared"}, excluded=())
+        ],
+    )
+    bob = _user(
+        2,
+        "bob",
+        proxies=[
+            _proxy(ProxyTypes.Hysteria, {"auth": "shared"}, excluded=())
+        ],
+    )
+    charlie = _user(
+        3,
+        "charlie",
+        status=UserStatus.disabled,
+        proxies=[
+            _proxy(ProxyTypes.Hysteria, {"auth": "shared"}, excluded=())
+        ],
+    )
+
+    duplicates = find_duplicate_credentials([alice, bob, charlie])
+
+    assert duplicates == [
+        CredentialDuplicate(
+            key=CredentialKey("hysteria", "HY2", "shared"),
+            users=("alice", "bob"),
+        )
+    ]
+
+
+def test_same_secret_on_disjoint_inbounds_is_allowed(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1,
+        "alice",
+        proxies=[
+            _proxy(
+                ProxyTypes.Shadowsocks,
+                {"method": "chacha20-ietf-poly1305", "password": "same"},
+                excluded=("SS-B",),
+            )
+        ],
+    )
+    bob = _user(
+        2,
+        "bob",
+        proxies=[
+            _proxy(
+                ProxyTypes.Shadowsocks,
+                {"method": "chacha20-ietf-poly1305", "password": "same"},
+                excluded=("SS-A",),
+            )
+        ],
+    )
+
+    assert find_duplicate_credentials([alice, bob]) == []
+
+
+def test_duplicate_repr_does_not_include_raw_credential(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1,
+        "alice",
+        proxies=[_proxy(ProxyTypes.Hysteria, {"auth": "leaky-secret"})],
+    )
+    bob = _user(
+        2,
+        "bob",
+        proxies=[_proxy(ProxyTypes.Hysteria, {"auth": "leaky-secret"})],
+    )
+
+    duplicate = find_duplicate_credentials([alice, bob])[0]
+
+    assert duplicate == CredentialDuplicate(
+        key=CredentialKey("hysteria", "HY2", "leaky-secret"),
+        users=("alice", "bob"),
+    )
+    assert "leaky-secret" not in repr(duplicate)
+
+
+@pytest.mark.parametrize(
+    "proxy_type,settings",
+    [
+        (ProxyTypes.VMess, {}),
+        (ProxyTypes.VLESS, {}),
+        (ProxyTypes.Trojan, {}),
+        (ProxyTypes.AnyTLS, {}),
+        (ProxyTypes.AnyTLS, None),
+        (ProxyTypes.AnyTLS, []),
+        (ProxyTypes.Hysteria, {}),
+        (ProxyTypes.Shadowsocks, {"method": "chacha20-ietf-poly1305"}),
+        (ProxyTypes.Shadowsocks, {"password": "missing-method"}),
+    ],
+)
+def test_malformed_proxy_credentials_are_skipped(
+    monkeypatch, proxy_type, settings
+):
+    monkeypatch.setattr(xray, "config", _config())
+    user = _user(1, "alice", proxies=[_proxy(proxy_type, settings)])
+
+    assert credential_keys_for_user(user) == ()
+    assert find_duplicate_credentials([user]) == []
+
+
+def test_repair_duplicate_credentials_rotates_all_but_one_user(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1, "alice", proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})]
+    )
+    bob = _user(
+        2, "bob", proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})]
+    )
+
+    repaired = repair_duplicate_credentials([alice, bob])
+
+    assert repaired == ["bob"]
+    assert alice.proxies[0].settings["password"] == "same"
+    assert bob.proxies[0].settings["password"] != "same"
+    assert find_duplicate_credentials([alice, bob]) == []
+
+
+@pytest.mark.parametrize(
+    "proxy_type,settings,credential_field",
+    [
+        (
+            ProxyTypes.VMess,
+            {"id": "11111111-1111-1111-1111-111111111111"},
+            "id",
+        ),
+        (
+            ProxyTypes.VLESS,
+            {"id": "22222222-2222-2222-2222-222222222222"},
+            "id",
+        ),
+        (ProxyTypes.Trojan, {"password": "same"}, "password"),
+        (
+            ProxyTypes.Shadowsocks,
+            {"method": "chacha20-ietf-poly1305", "password": "same"},
+            "password",
+        ),
+        (ProxyTypes.Hysteria, {"auth": "same"}, "auth"),
+        (ProxyTypes.AnyTLS, {"password": "same"}, "password"),
+    ],
+)
+def test_repair_duplicate_credentials_rotates_supported_protocols(
+    monkeypatch, proxy_type, settings, credential_field
+):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(1, "alice", proxies=[_proxy(proxy_type, settings.copy())])
+    bob = _user(2, "bob", proxies=[_proxy(proxy_type, settings.copy())])
+
+    repaired = repair_duplicate_credentials([alice, bob])
+
+    assert repaired == ["bob"]
+    assert alice.proxies[0].settings[credential_field] == settings[
+        credential_field
+    ]
+    assert bob.proxies[0].settings[credential_field] != settings[
+        credential_field
+    ]
+    if proxy_type == ProxyTypes.Shadowsocks:
+        assert bob.proxies[0].settings["method"] == settings["method"]
+    assert find_duplicate_credentials([alice, bob]) == []
+
+
+def test_repair_duplicate_credentials_raises_when_rotation_makes_no_progress(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    monkeypatch.setattr(
+        credential_isolation, "_rotate_proxy_credential", lambda proxy: None
+    )
+    alice = _user(
+        1, "alice", proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})]
+    )
+    bob = _user(
+        2, "bob", proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})]
+    )
+
+    with pytest.raises(RuntimeError, match="Unable to repair"):
+        repair_duplicate_credentials([alice, bob])
+
+
+def test_repair_duplicate_credentials_sanitizes_invalid_settings_error(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1,
+        "alice",
+        proxies=[_proxy(ProxyTypes.VMess, {"id": "raw-secret"})],
+    )
+    bob = _user(
+        2,
+        "bob",
+        proxies=[_proxy(ProxyTypes.VMess, {"id": "raw-secret"})],
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        repair_duplicate_credentials([alice, bob])
+
+    message = str(exc_info.value)
+    assert "vmess" in message
+    assert "VMess" in message
+    assert "bob" in message
+    assert "raw-secret" not in message
+
+
+def test_validate_unique_credentials_rejects_duplicate_runnable_user(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    existing = _user(
+        1,
+        "alice",
+        proxies=[_proxy(ProxyTypes.Trojan, {"password": "same"})],
+    )
+    pending = _user(
+        2,
+        "bob",
+        proxies=[_proxy(ProxyTypes.Trojan, {"password": "same"})],
+    )
+
+    with pytest.raises(CredentialConflictError) as exc_info:
+        validate_unique_credentials(pending, [existing, pending])
+
+    message = str(exc_info.value)
+    assert "trojan" in message
+    assert "Trojan" in message
+    assert "alice" in message
+    assert "same" not in message
+
+
+def test_validate_unique_credentials_allows_same_user_unchanged(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    user = _user(
+        1,
+        "alice",
+        proxies=[
+            _proxy(
+                ProxyTypes.VLESS,
+                {"id": "33333333-3333-3333-3333-333333333333"},
+            )
+        ],
+    )
+
+    validate_unique_credentials(user, [user])
+
+
+def test_validate_unique_credentials_ignores_non_runnable_users(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    existing = _user(
+        1,
+        "alice",
+        status=UserStatus.disabled,
+        proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+    )
+    pending = _user(
+        2,
+        "bob",
+        proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+    )
+
+    validate_unique_credentials(pending, [existing, pending])
+
+
+def test_create_user_rejects_duplicate_runnable_credentials(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.Trojan, {"password": "same"}
+            ),
+        )
+
+        with pytest.raises(CredentialConflictError):
+            crud.create_user(
+                db,
+                _user_create(
+                    "bob", ProxyTypes.Trojan, {"password": "same"}
+                ),
+            )
+    finally:
+        db.close()
+
+
+def test_update_user_status_rejects_duplicate_when_entering_runnable(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.AnyTLS, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.disabled,
+            proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+        )
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.update_user_status(db, bob, UserStatus.active)
+    finally:
+        db.close()
+
+
+def test_reset_user_data_usage_rejects_duplicate_activation(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.Trojan, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.limited,
+            proxies=[_proxy(ProxyTypes.Trojan, {"password": "same"})],
+        )
+        bob.used_traffic = 10
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.reset_user_data_usage(db, bob)
+    finally:
+        db.close()
+
+
+def test_reset_user_by_next_rejects_duplicate_activation(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.AnyTLS, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.expired,
+            proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+        )
+        bob.used_traffic = 10
+        bob.data_limit = 20
+        bob.next_plan = NextPlan(
+            data_limit=30,
+            expire=None,
+            add_remaining_traffic=False,
+            fire_on_either=True,
+        )
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.reset_user_by_next(db, bob)
+    finally:
+        db.close()
+
+
+def test_reset_all_users_data_usage_rejects_duplicate_activation(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.Trojan, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.limited,
+            proxies=[_proxy(ProxyTypes.Trojan, {"password": "same"})],
+        )
+        bob.used_traffic = 10
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.reset_all_users_data_usage(db)
+    finally:
+        db.close()
+
+
+def test_activate_all_disabled_users_rejects_duplicate_activation(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.AnyTLS, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.disabled,
+            proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+        )
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.activate_all_disabled_users(db)
+    finally:
+        db.close()
+
+
+def test_build_user_removal_plan_snapshots_runtime_fields_before_delete(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1, "alice", proxies=[_proxy(ProxyTypes.Hysteria, {"auth": "gone"})]
+    )
+
+    plan = build_user_removal_plan([alice])
+
+    assert plan.users[0].id == 1
+    assert plan.users[0].username == "alice"
+    assert plan.users[0].email == "1.alice"
+    assert plan.users[0].config_reload_inbounds == frozenset({"HY2"})
+
+
+def test_remove_users_from_runtime_uses_removal_plan_snapshot(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    monkeypatch.setattr(xray, "nodes", {})
+    removed = []
+    restarted = []
+    monkeypatch.setattr(
+        operations,
+        "_remove_user_from_inbound",
+        lambda api, inbound_tag, email: removed.append((inbound_tag, email)),
+    )
+    monkeypatch.setattr(
+        operations,
+        "_restart_started_nodes_for_config_reload",
+        lambda inbound_tags: restarted.append(set(inbound_tags)),
+    )
+    alice = _user(
+        1, "alice", proxies=[_proxy(ProxyTypes.Hysteria, {"auth": "gone"})]
+    )
+    plan = build_user_removal_plan([alice])
+
+    operations.remove_users_from_runtime(plan)
+
+    removed_tags = {inbound_tag for inbound_tag, email in removed}
+    assert removed_tags == {"VMess", "VLESS", "Trojan", "SS-A", "SS-B", "HY2"}
+    assert {email for inbound_tag, email in removed} == {"1.alice"}
+    assert restarted == [{"HY2"}]
+
+
+def test_get_autodeletable_expired_users_returns_eligible_users(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        expired = _user(
+            1,
+            "alice",
+            status=UserStatus.expired,
+            proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "gone"})],
+        )
+        expired.last_status_change = datetime.utcnow() - timedelta(days=2)
+        expired.auto_delete_in_days = 1
+        db.add(expired)
+        db.commit()
+
+        users = crud.get_autodeletable_expired_users(db)
+
+        assert [user.username for user in users] == ["alice"]
+    finally:
+        db.close()

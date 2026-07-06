@@ -18,6 +18,10 @@ from app.models.user import (
     UserUsagesResponse,
 )
 from app.utils import report, responses
+from app.xray.credential_isolation import (
+    CredentialConflictError,
+    build_user_removal_plan,
+)
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
@@ -62,6 +66,9 @@ def add_user(
         dbuser = crud.create_user(
             db, new_user, admin=crud.get_admin(db, admin.username)
         )
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="User already exists")
@@ -114,7 +121,11 @@ def modify_user(
 
     old_status = dbuser.status
     old_reload_inbounds = _config_reload_inbounds(dbuser)
-    dbuser = crud.update_user(db, dbuser, modified_user)
+    try:
+        dbuser = crud.update_user(db, dbuser, modified_user)
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
     user = UserResponse.model_validate(dbuser)
     affected_reload_inbounds = old_reload_inbounds | _config_reload_inbounds(dbuser)
 
@@ -175,7 +186,7 @@ def remove_user(
     return {"detail": "User successfully deleted"}
 
 
-@router.post("/user/{username}/reset", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
+@router.post("/user/{username}/reset", response_model=UserResponse, responses={403: responses._403, 404: responses._404, 409: responses._409})
 def reset_user_data_usage(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -183,7 +194,11 @@ def reset_user_data_usage(
     admin: Admin = Depends(Admin.get_current),
 ):
     """Reset user data usage"""
-    dbuser = crud.reset_user_data_usage(db=db, dbuser=dbuser)
+    try:
+        dbuser = crud.reset_user_data_usage(db=db, dbuser=dbuser)
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(xray.operations.add_user, dbuser=dbuser)
 
@@ -196,7 +211,7 @@ def reset_user_data_usage(
     return dbuser
 
 
-@router.post("/user/{username}/revoke_sub", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
+@router.post("/user/{username}/revoke_sub", response_model=UserResponse, responses={403: responses._403, 404: responses._404, 409: responses._409})
 def revoke_user_subscription(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -204,7 +219,11 @@ def revoke_user_subscription(
     admin: Admin = Depends(Admin.get_current),
 ):
     """Revoke users subscription (Subscription link and proxies)"""
-    dbuser = crud.revoke_user_sub(db=db, dbuser=dbuser)
+    try:
+        dbuser = crud.revoke_user_sub(db=db, dbuser=dbuser)
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
 
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(xray.operations.update_user, dbuser=dbuser)
@@ -257,13 +276,17 @@ def get_users(
     return {"users": users, "total": count}
 
 
-@router.post("/users/reset", responses={403: responses._403, 404: responses._404})
+@router.post("/users/reset", responses={403: responses._403, 404: responses._404, 409: responses._409})
 def reset_users_data_usage(
     db: Session = Depends(get_db), admin: Admin = Depends(Admin.check_sudo_admin)
 ):
     """Reset all users data usage"""
     dbadmin = crud.get_admin(db, admin.username)
-    crud.reset_all_users_data_usage(db=db, admin=dbadmin)
+    try:
+        crud.reset_all_users_data_usage(db=db, admin=dbadmin)
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
     startup_config = xray.config.include_db_users()
     xray.core.restart(startup_config)
     for node_id, node in list(xray.nodes.items()):
@@ -287,14 +310,18 @@ def get_user_usage(
     return {"usages": usages, "username": dbuser.username}
 
 
-@router.post("/user/{username}/active-next", response_model=UserResponse, responses={403: responses._403, 404: responses._404})
+@router.post("/user/{username}/active-next", response_model=UserResponse, responses={403: responses._403, 404: responses._404, 409: responses._409})
 def active_next_plan(
     bg: BackgroundTasks,
     db: Session = Depends(get_db),
     dbuser: UserResponse = Depends(get_validated_user),
 ):
     """Reset user by next plan"""
-    dbuser = crud.reset_user_by_next(db=db, dbuser=dbuser)
+    try:
+        dbuser = crud.reset_user_by_next(db=db, dbuser=dbuser)
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
 
     if (dbuser is None or dbuser.next_plan is None):
         raise HTTPException(
@@ -393,6 +420,7 @@ def delete_expired_users(
 
     expired_users = get_expired_users_list(db, admin, expired_after, expired_before)
     removed_users = [u.username for u in expired_users]
+    removal_plan = build_user_removal_plan(expired_users)
 
     if not removed_users:
         raise HTTPException(
@@ -400,6 +428,7 @@ def delete_expired_users(
         )
 
     crud.remove_users(db, expired_users)
+    bg.add_task(xray.operations.remove_users_from_runtime, removal_plan=removal_plan)
 
     for removed_user in removed_users:
         logger.info(f'User "{removed_user}" deleted')

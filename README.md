@@ -279,6 +279,12 @@ VMess/Trojan provisioning and a fuller protocol-switching assistant remain roadm
 
 HY2 and AnyTLS are config-reload protocols in this fork. Creating, editing, removing, or migrating users for these protocols rebuilds the sing-box config and restarts affected nodes. The dashboard warns that active connections can briefly interrupt.
 
+## Proxy Credential Isolation
+
+MarzbanX treats per-user proxy credentials as the node-access security boundary. VMess/VLESS UUIDs and Trojan, Shadowsocks, HY2, and AnyTLS passwords must be unique for every runnable user on the same inbound. Deleting a user removes that user's runtime credential; remaining users do not need to re-pull subscriptions.
+
+Use `marzban-cli user audit-credentials` to list duplicate runnable credentials and `marzban-cli user repair-credentials --yes` to rotate duplicates. Users whose credentials are repaired must re-pull subscriptions.
+
 ## Dashboard Development
 
 Run the dashboard dev server when working on frontend code:
