@@ -365,16 +365,19 @@ def reconcile_orphaned_provisioned_config(db: Session) -> list[str]:
         return removed_tags
 
 
-def generated_inbound_tags_for_node(dbnode: DBNode) -> list[str]:
+def generated_inbound_tags_for_node(db: Session, dbnode: DBNode) -> list[str]:
     return [
         tag
-        for tag in dbnode.active_inbounds
-        if _GENERATED_INBOUND_TAG.match(tag)
+        for (tag,) in db.query(ProxyInbound.tag)
+        .filter(ProxyInbound.owner_node_id == dbnode.id)
+        .order_by(ProxyInbound.tag)
+        .all()
+        if tag
     ]
 
 
 def remove_provisioned_node(db: Session, dbnode: DBNode) -> list[str]:
-    tags = generated_inbound_tags_for_node(dbnode)
+    tags = generated_inbound_tags_for_node(db, dbnode)
     with _config_apply_lock:
         crud.remove_node(db, dbnode, remove_inbound_tags=tags)
         if tags:

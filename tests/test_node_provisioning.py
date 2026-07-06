@@ -925,7 +925,7 @@ def test_remove_provisioned_node_removes_generated_inbound_rows_and_config(monke
     db = _db_session()
     dbnode = _db_node(db)
     dbnode.inbounds_mode = NodeInboundsMode.panel
-    inbound = ProxyInbound(tag="node-1-hy2-8443")
+    inbound = ProxyInbound(tag="node-1-hy2-8443", owner_node_id=dbnode.id)
     db.add(inbound)
     db.flush()
     dbnode.active_inbound_objects = [inbound]
@@ -1172,6 +1172,49 @@ def test_redeem_node_install_payload_can_peek_before_consuming_token():
     assert peeked is not None
     assert consumed is not None
     assert redeem_node_install_payload(db, token, consume=True) is None
+
+
+def test_remove_provisioned_node_removes_owned_inbounds_even_when_deselected(monkeypatch):
+    from app import xray
+    import app.xray.node_provisioning as provisioning
+
+    db = _db_session()
+    dbnode = _db_node(db)
+    dbnode.inbounds_mode = NodeInboundsMode.panel
+    other_node = DBNode(
+        name="node-2",
+        address="203.0.113.20",
+        port=62050,
+        api_port=62051,
+        inbounds_mode=NodeInboundsMode.panel,
+    )
+    db.add(other_node)
+    db.flush()
+    db.add_all([
+        ProxyInbound(tag="node-1-vless-443", owner_node_id=dbnode.id),
+        ProxyInbound(tag="node-2-vless-443", owner_node_id=other_node.id),
+    ])
+    db.commit()
+    xray.config = XRayConfig(
+        {
+            "inbounds": [
+                {"tag": "node-1-vless-443", "protocol": "vless", "port": 443},
+                {"tag": "node-2-vless-443", "protocol": "vless", "port": 8443},
+            ],
+            "outbounds": [{"protocol": "freedom", "tag": "DIRECT"}],
+        }
+    )
+    applied = []
+    monkeypatch.setattr(provisioning, "_apply_provisioned_config", applied.append)
+
+    removed = remove_provisioned_node(db, dbnode)
+
+    assert removed == ["node-1-vless-443"]
+    assert db.query(ProxyInbound).filter_by(tag="node-1-vless-443").first() is None
+    assert db.query(ProxyInbound).filter_by(tag="node-2-vless-443").first() is not None
+    applied_tags = [inbound["tag"] for inbound in applied[-1]["inbounds"]]
+    assert "node-1-vless-443" not in applied_tags
+    assert "node-2-vless-443" in applied_tags
 
 
 def test_remove_node_revokes_pending_provision_tokens():
