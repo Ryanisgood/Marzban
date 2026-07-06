@@ -59,6 +59,7 @@ export type NodeType = z.infer<typeof NodeSchema>;
 
 export const NodeProvisionProtocolSchema = z.enum([
   "hy2",
+  "anytls",
   "vless-reality",
   "shadowsocks",
 ]);

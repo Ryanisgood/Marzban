@@ -469,6 +469,27 @@ const RadioCard: FC<
               </FormControl>
             </VStack>
           )}
+          {title === "anytls" && isSelected && (
+            <VStack alignItems="flex-start" w="full">
+              <FormControl minH="86px">
+                <Text fontSize="sm" pb={1}>
+                  {t("userDialog.anytlsPassword")}
+                </Text>
+                <Input
+                  fontSize="xs"
+                  size="sm"
+                  borderRadius="6px"
+                  pl={2}
+                  pr={2}
+                  placeholder={t("userDialog.generatedByDefault")}
+                  {...form.register("proxies.anytls.password")}
+                />
+                <Text fontSize="xs" color="gray.500" pt={1}>
+                  {t("userDialog.anytlsPasswordDesc")}
+                </Text>
+              </FormControl>
+            </VStack>
+          )}
         </VStack>
       </AccordionPanel>
     </AccordionItem>

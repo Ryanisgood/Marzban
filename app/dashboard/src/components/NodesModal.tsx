@@ -126,6 +126,48 @@ const portSchema = requiredNumberSchema.pipe(z.number().int().min(1).max(65535))
 const numberInputValue = (value: unknown) => (value == null ? "" : String(value));
 const parseNumberInput = (value: string | number) =>
   value === "" ? "" : Number(value);
+const provisionProtocolOptions = [
+  {
+    key: "hy2",
+    portField: "hy2_port",
+    protocol: "hy2",
+    label: "HY2",
+    defaultPort: 8443,
+    core: "sing-box",
+    transport: "UDP",
+    descriptionKey: "nodes.protocolHy2Desc",
+  },
+  {
+    key: "anytls",
+    portField: "anytls_port",
+    protocol: "anytls",
+    label: "AnyTLS",
+    defaultPort: 443,
+    core: "sing-box",
+    transport: "TCP",
+    descriptionKey: "nodes.protocolAnyTLSDesc",
+  },
+  {
+    key: "vless_reality",
+    portField: "vless_reality_port",
+    protocol: "vless-reality",
+    label: "VLESS REALITY",
+    defaultPort: 443,
+    core: "Xray",
+    transport: "TCP",
+    descriptionKey: "nodes.protocolVlessRealityDesc",
+  },
+  {
+    key: "shadowsocks",
+    portField: "shadowsocks_port",
+    protocol: "shadowsocks",
+    label: "Shadowsocks",
+    defaultPort: 8388,
+    core: "Xray",
+    transport: "TCP",
+    descriptionKey: "nodes.protocolShadowsocksDesc",
+  },
+] as const;
 
 const ProvisionNodeFormSchema = z
   .object({
@@ -136,13 +178,15 @@ const ProvisionNodeFormSchema = z
     usage_coefficient: requiredNumberSchema.pipe(z.number().gt(0)),
     hy2: z.boolean(),
     hy2_port: z.unknown(),
+    anytls: z.boolean(),
+    anytls_port: z.unknown(),
     vless_reality: z.boolean(),
     vless_reality_port: z.unknown(),
     shadowsocks: z.boolean(),
     shadowsocks_port: z.unknown(),
   })
   .superRefine((value, ctx) => {
-    if (!value.hy2 && !value.vless_reality && !value.shadowsocks) {
+    if (!value.hy2 && !value.anytls && !value.vless_reality && !value.shadowsocks) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Select at least one protocol",
@@ -152,6 +196,7 @@ const ProvisionNodeFormSchema = z
 
     [
       [value.hy2, value.hy2_port, "hy2_port"],
+      [value.anytls, value.anytls_port, "anytls_port"],
       [value.vless_reality, value.vless_reality_port, "vless_reality_port"],
       [value.shadowsocks, value.shadowsocks_port, "shadowsocks_port"],
     ].forEach(([enabled, port, path]) => {
@@ -496,6 +541,8 @@ const AddNodeForm: FC<AddNodeFormType> = ({
       usage_coefficient: 1,
       hy2: true,
       hy2_port: 8443,
+      anytls: false,
+      anytls_port: 443,
       vless_reality: false,
       vless_reality_port: 443,
       shadowsocks: false,
@@ -556,6 +603,9 @@ const AddNodeForm: FC<AddNodeFormType> = ({
     if (values.hy2) {
       inbounds.push({ protocol: "hy2", port: Number(values.hy2_port) });
     }
+    if (values.anytls) {
+      inbounds.push({ protocol: "anytls", port: Number(values.anytls_port) });
+    }
     if (values.vless_reality) {
       inbounds.push({
         protocol: "vless-reality",
@@ -586,10 +636,9 @@ const AddNodeForm: FC<AddNodeFormType> = ({
     });
   };
   const expectedCore =
-    provisionForm.watch("hy2") ? "sing-box" : "Xray";
-  const hy2Enabled = provisionForm.watch("hy2");
-  const vlessRealityEnabled = provisionForm.watch("vless_reality");
-  const shadowsocksEnabled = provisionForm.watch("shadowsocks");
+    provisionForm.watch("hy2") || provisionForm.watch("anytls")
+      ? "sing-box"
+      : "Xray";
   return (
     <AccordionItem
       border="1px solid"
@@ -697,85 +746,68 @@ const AddNodeForm: FC<AddNodeFormType> = ({
               <FormControl py={1} isInvalid={!!provisionForm.formState.errors.hy2}>
                 <FormLabel m={0}>{t("nodes.provisionProtocols")}</FormLabel>
                 <VStack align="stretch" spacing={2} pt={2}>
-                  <HStack alignItems="center">
-                    <Checkbox {...provisionForm.register("hy2")}>HY2</Checkbox>
-                    <Controller
-                      name="hy2_port"
-                      control={provisionForm.control}
-                      render={({ field }) => (
-                        <CustomInput
-                          label={t("nodes.publicPort")}
-                          size="sm"
-                          type="number"
-                          placeholder="8443"
-                          value={numberInputValue(field.value)}
-                          onChange={(value) =>
-                            field.onChange(parseNumberInput(value))
-                          }
-                          disabled={!hy2Enabled}
-                          error={
-                            hy2Enabled
-                              ? provisionForm.formState.errors.hy2_port?.message
-                              : undefined
-                          }
-                        />
-                      )}
-                    />
-                  </HStack>
-                  <HStack alignItems="center">
-                    <Checkbox {...provisionForm.register("vless_reality")}>
-                      VLESS REALITY
-                    </Checkbox>
-                    <Controller
-                      name="vless_reality_port"
-                      control={provisionForm.control}
-                      render={({ field }) => (
-                        <CustomInput
-                          label={t("nodes.publicPort")}
-                          size="sm"
-                          type="number"
-                          placeholder="443"
-                          value={numberInputValue(field.value)}
-                          onChange={(value) =>
-                            field.onChange(parseNumberInput(value))
-                          }
-                          disabled={!vlessRealityEnabled}
-                          error={
-                            vlessRealityEnabled
-                              ? provisionForm.formState.errors.vless_reality_port?.message
-                              : undefined
-                          }
-                        />
-                      )}
-                    />
-                  </HStack>
-                  <HStack alignItems="center">
-                    <Checkbox {...provisionForm.register("shadowsocks")}>
-                      Shadowsocks
-                    </Checkbox>
-                    <Controller
-                      name="shadowsocks_port"
-                      control={provisionForm.control}
-                      render={({ field }) => (
-                        <CustomInput
-                          label={t("nodes.publicPort")}
-                          size="sm"
-                          type="number"
-                          placeholder="8388"
-                          value={numberInputValue(field.value)}
-                          onChange={(value) =>
-                            field.onChange(parseNumberInput(value))
-                          }
-                          disabled={!shadowsocksEnabled}
-                          error={
-                            shadowsocksEnabled
-                              ? provisionForm.formState.errors.shadowsocks_port?.message
-                              : undefined
-                          }
-                        />
-                      )}
-                    />
-                  </HStack>
+                  {provisionProtocolOptions.map((option) => {
+                    const enabled = provisionForm.watch(option.key);
+                    return (
+                      <Box
+                        key={option.key}
+                        border="1px solid"
+                        borderColor={enabled ? "primary.200" : "gray.200"}
+                        _dark={{
+                          borderColor: enabled ? "primary.300" : "gray.600",
+                        }}
+                        borderRadius="6px"
+                        p={2}
+                      >
+                        <HStack alignItems="center" justify="space-between" gap={3}>
+                          <Box minW={0}>
+                            <HStack spacing={2} flexWrap="wrap">
+                              <Checkbox {...provisionForm.register(option.key)}>
+                                {option.label}
+                              </Checkbox>
+                              <Badge
+                                colorScheme={
+                                  option.core === "sing-box" ? "purple" : "blue"
+                                }
+                              >
+                                {option.core}
+                              </Badge>
+                              <Badge variant="outline">{option.transport}</Badge>
+                            </HStack>
+                            <Text fontSize="xs" color="gray.500" mt={1}>
+                              {t(option.descriptionKey)}
+                            </Text>
+                          </Box>
+                          <Box w="132px" flexShrink={0}>
+                            <Controller
+                              name={option.portField}
+                              control={provisionForm.control}
+                              render={({ field }) => (
+                                <CustomInput
+                                  label={t("nodes.publicPort")}
+                                  size="sm"
+                                  type="number"
+                                  placeholder={String(option.defaultPort)}
+                                  value={numberInputValue(field.value)}
+                                  onChange={(value) =>
+                                    field.onChange(parseNumberInput(value))
+                                  }
+                                  disabled={!enabled}
+                                  error={
+                                    enabled
+                                      ? provisionForm.formState.errors[
+                                          option.portField
+                                        ]?.message
+                                      : undefined
+                                  }
+                                />
+                              )}
+                            />
+                          </Box>
+                        </HStack>
+                      </Box>
+                    );
+                  })}
                 </VStack>
                 {provisionForm.formState.errors.hy2 && (
                   <FormErrorMessage>

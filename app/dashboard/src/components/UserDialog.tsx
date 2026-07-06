@@ -124,6 +124,7 @@ const getDefaultValues = (): FormType => {
       trojan: { password: "" },
       shadowsocks: { password: "", method: "chacha20-ietf-poly1305" },
       hysteria: { auth: "" },
+      anytls: { password: "" },
     },
   };
 };
@@ -165,6 +166,7 @@ const baseSchema = {
       deleteIfEmpty(ins.shadowsocks, "password");
       deleteIfEmpty(ins.shadowsocks, "method");
       deleteIfEmpty(ins.hysteria, "auth");
+      deleteIfEmpty(ins.anytls, "password");
       return ins;
     }),
   data_limit: z
@@ -726,11 +728,12 @@ export const UserDialog: FC<UserDialogProps> = () => {
                   >
                   <FormLabel>{t("userDialog.protocols")}</FormLabel>
                   {Array.isArray(selectedProxies) &&
-                    selectedProxies.includes("hysteria") && (
+                    (selectedProxies.includes("hysteria") ||
+                      selectedProxies.includes("anytls")) && (
                       <Alert status="warning" mb={2} borderRadius="6px">
                         <AlertIcon />
                         <AlertDescription fontSize="xs">
-                          {t("userDialog.hysteriaRestartWarning")}
+                          {t("userDialog.singBoxRestartWarning")}
                         </AlertDescription>
                       </Alert>
                     )}
@@ -760,6 +763,10 @@ export const UserDialog: FC<UserDialogProps> = () => {
                               {
                                 title: "hysteria",
                                 description: t("userDialog.hysteriaDesc"),
+                              },
+                              {
+                                title: "anytls",
+                                description: t("userDialog.anytlsDesc"),
                               },
                             ]}
                             disabled={disabled}

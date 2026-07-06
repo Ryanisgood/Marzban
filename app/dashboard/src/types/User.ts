@@ -13,6 +13,7 @@ export type ProxyKeys = (
   | "trojan"
   | "shadowsocks"
   | "hysteria"
+  | "anytls"
 )[];
 export type ProxyType = {
   vmess?: {
@@ -31,6 +32,9 @@ export type ProxyType = {
   };
   hysteria?: {
     auth?: string;
+  };
+  anytls?: {
+    password?: string;
   };
 };
 

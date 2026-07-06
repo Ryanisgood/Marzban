@@ -18,7 +18,8 @@ export type ProtocolType =
   | "vless"
   | "trojan"
   | "shadowsocks"
-  | "hysteria";
+  | "hysteria"
+  | "anytls";
 
 export type FilterUsageType = {
   start?: string;
