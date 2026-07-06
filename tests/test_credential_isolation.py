@@ -269,6 +269,50 @@ def test_repair_duplicate_credentials_rotates_all_but_one_user(monkeypatch):
     assert find_duplicate_credentials([alice, bob]) == []
 
 
+@pytest.mark.parametrize(
+    "proxy_type,settings,credential_field",
+    [
+        (
+            ProxyTypes.VMess,
+            {"id": "11111111-1111-1111-1111-111111111111"},
+            "id",
+        ),
+        (
+            ProxyTypes.VLESS,
+            {"id": "22222222-2222-2222-2222-222222222222"},
+            "id",
+        ),
+        (ProxyTypes.Trojan, {"password": "same"}, "password"),
+        (
+            ProxyTypes.Shadowsocks,
+            {"method": "chacha20-ietf-poly1305", "password": "same"},
+            "password",
+        ),
+        (ProxyTypes.Hysteria, {"auth": "same"}, "auth"),
+        (ProxyTypes.AnyTLS, {"password": "same"}, "password"),
+    ],
+)
+def test_repair_duplicate_credentials_rotates_supported_protocols(
+    monkeypatch, proxy_type, settings, credential_field
+):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(1, "alice", proxies=[_proxy(proxy_type, settings.copy())])
+    bob = _user(2, "bob", proxies=[_proxy(proxy_type, settings.copy())])
+
+    repaired = repair_duplicate_credentials([alice, bob])
+
+    assert repaired == ["bob"]
+    assert alice.proxies[0].settings[credential_field] == settings[
+        credential_field
+    ]
+    assert bob.proxies[0].settings[credential_field] != settings[
+        credential_field
+    ]
+    if proxy_type == ProxyTypes.Shadowsocks:
+        assert bob.proxies[0].settings["method"] == settings["method"]
+    assert find_duplicate_credentials([alice, bob]) == []
+
+
 def test_repair_duplicate_credentials_raises_when_rotation_makes_no_progress(
     monkeypatch,
 ):
@@ -285,3 +329,28 @@ def test_repair_duplicate_credentials_raises_when_rotation_makes_no_progress(
 
     with pytest.raises(RuntimeError, match="Unable to repair"):
         repair_duplicate_credentials([alice, bob])
+
+
+def test_repair_duplicate_credentials_sanitizes_invalid_settings_error(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1,
+        "alice",
+        proxies=[_proxy(ProxyTypes.VMess, {"id": "raw-secret"})],
+    )
+    bob = _user(
+        2,
+        "bob",
+        proxies=[_proxy(ProxyTypes.VMess, {"id": "raw-secret"})],
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        repair_duplicate_credentials([alice, bob])
+
+    message = str(exc_info.value)
+    assert "vmess" in message
+    assert "VMess" in message
+    assert "bob" in message
+    assert "raw-secret" not in message

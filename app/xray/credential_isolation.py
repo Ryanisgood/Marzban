@@ -87,7 +87,14 @@ def repair_duplicate_credentials(users) -> list[str]:
             for proxy in user.proxies:
                 if duplicate.key not in credential_keys_for_proxy(proxy):
                     continue
-                _rotate_proxy_credential(proxy)
+                try:
+                    _rotate_proxy_credential(proxy)
+                except Exception:
+                    raise RuntimeError(
+                        "Unable to repair duplicate proxy credentials for "
+                        f"{duplicate.key.protocol} inbound "
+                        f"{duplicate.key.inbound_tag} user {username}"
+                    ) from None
                 repaired_usernames.append(username)
                 repaired_this_round = True
                 break
