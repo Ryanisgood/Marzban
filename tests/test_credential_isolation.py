@@ -3,6 +3,8 @@ from datetime import datetime
 
 os.environ.setdefault("XRAY_EXECUTABLE_PATH", "/bin/echo")
 
+import pytest
+
 from app import xray
 from app.db.models import Proxy, ProxyInbound, User as DBUser
 from app.models.proxy import ProxyTypes
@@ -200,3 +202,47 @@ def test_same_secret_on_disjoint_inbounds_is_allowed(monkeypatch):
     )
 
     assert find_duplicate_credentials([alice, bob]) == []
+
+
+def test_duplicate_repr_does_not_include_raw_credential(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1,
+        "alice",
+        proxies=[_proxy(ProxyTypes.Hysteria, {"auth": "leaky-secret"})],
+    )
+    bob = _user(
+        2,
+        "bob",
+        proxies=[_proxy(ProxyTypes.Hysteria, {"auth": "leaky-secret"})],
+    )
+
+    duplicate = find_duplicate_credentials([alice, bob])[0]
+
+    assert duplicate == CredentialDuplicate(
+        key=CredentialKey("hysteria", "HY2", "leaky-secret"),
+        users=("alice", "bob"),
+    )
+    assert "leaky-secret" not in repr(duplicate)
+
+
+@pytest.mark.parametrize(
+    "proxy_type,settings",
+    [
+        (ProxyTypes.VMess, {}),
+        (ProxyTypes.VLESS, {}),
+        (ProxyTypes.Trojan, {}),
+        (ProxyTypes.AnyTLS, {}),
+        (ProxyTypes.Hysteria, {}),
+        (ProxyTypes.Shadowsocks, {"method": "chacha20-ietf-poly1305"}),
+        (ProxyTypes.Shadowsocks, {"password": "missing-method"}),
+    ],
+)
+def test_malformed_proxy_credentials_are_skipped(
+    monkeypatch, proxy_type, settings
+):
+    monkeypatch.setattr(xray, "config", _config())
+    user = _user(1, "alice", proxies=[_proxy(proxy_type, settings)])
+
+    assert credential_keys_for_user(user) == ()
+    assert find_duplicate_credentials([user]) == []

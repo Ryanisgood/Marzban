@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 
 from app import xray
@@ -15,7 +15,7 @@ RUNNABLE_STATUSES = {UserStatus.active, UserStatus.on_hold}
 class CredentialKey:
     protocol: str
     inbound_tag: str
-    credential: str
+    credential: str = field(repr=False)
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,8 @@ def effective_inbound_tags_for_proxy(proxy) -> tuple[str, ...]:
 def credential_keys_for_proxy(proxy) -> tuple[CredentialKey, ...]:
     proxy_type = ProxyTypes(proxy.type)
     credential = _credential_for_proxy(proxy_type, proxy.settings)
+    if credential is None:
+        return ()
     return tuple(
         CredentialKey(proxy_type.value, inbound_tag, credential)
         for inbound_tag in effective_inbound_tags_for_proxy(proxy)
@@ -68,13 +70,20 @@ def find_duplicate_credentials(users) -> list[CredentialDuplicate]:
     ]
 
 
-def _credential_for_proxy(proxy_type: ProxyTypes, settings: dict) -> str:
+def _credential_for_proxy(proxy_type: ProxyTypes, settings: dict) -> str | None:
     if proxy_type in {ProxyTypes.VMess, ProxyTypes.VLESS}:
-        return str(settings["id"])
+        credential = settings.get("id")
+        return str(credential) if credential is not None else None
     if proxy_type in {ProxyTypes.Trojan, ProxyTypes.AnyTLS}:
-        return str(settings["password"])
+        credential = settings.get("password")
+        return str(credential) if credential is not None else None
     if proxy_type == ProxyTypes.Hysteria:
-        return str(settings["auth"])
+        credential = settings.get("auth")
+        return str(credential) if credential is not None else None
     if proxy_type == ProxyTypes.Shadowsocks:
-        return f"{settings['method']}:{settings['password']}"
+        method = settings.get("method")
+        password = settings.get("password")
+        if method is None or password is None:
+            return None
+        return f"{method}:{password}"
     raise ValueError(f"unsupported proxy type: {proxy_type}")
