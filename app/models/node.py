@@ -39,8 +39,8 @@ class NodeCreate(Node):
             "address": "192.168.1.1",
             "port": 62050,
             "api_port": 62051,
-            "active_inbounds": ["VLESS TCP REALITY"],
-            "inbounds_mode": "panel",
+            "active_inbounds": [],
+            "inbounds_mode": "legacy",
             "add_as_new_host": True,
             "usage_coefficient": 1
         }
