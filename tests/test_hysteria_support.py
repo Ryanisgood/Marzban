@@ -20,6 +20,7 @@ import app.models.user as user_models
 from app.models.proxy import AnyTLSSettings, HysteriaSettings, ProxyTypes
 from app.models.user import UserCreate, UserDataLimitResetStrategy, UserStatus
 from app.subscription.clash import ClashMetaConfiguration
+from app.subscription.singbox import SingBoxConfiguration
 from app.subscription.v2ray import V2rayShareLink
 from app.utils.crypto import get_cert_SANs
 from app.xray import operations
@@ -555,6 +556,43 @@ def test_clash_meta_generates_hysteria2_proxy():
     assert proxy["sni"] == "hy.example.com"
     assert proxy["alpn"] == ["h3"]
     assert proxy["skip-cert-verify"] is True
+
+
+def test_singbox_generates_hysteria2_outbound():
+    conf = SingBoxConfiguration()
+
+    conf.add(
+        remark="Alice HY2",
+        address="node.example.com",
+        inbound={
+            "protocol": "hysteria",
+            "port": 443,
+            "network": "hysteria",
+            "tls": "tls",
+            "sni": "hy.example.com",
+            "host": [],
+            "path": "",
+            "header_type": "",
+            "alpn": "h3",
+            "ais": True,
+        },
+        settings={"auth": "secret-auth"},
+    )
+
+    rendered = yaml.safe_load(conf.render())
+    outbound = next(
+        item for item in rendered["outbounds"]
+        if item.get("tag") == "Alice HY2"
+    )
+
+    assert outbound["type"] == "hysteria2"
+    assert outbound["server"] == "node.example.com"
+    assert outbound["server_port"] == 443
+    assert outbound["password"] == "secret-auth"
+    assert outbound["tls"]["enabled"] is True
+    assert outbound["tls"]["server_name"] == "hy.example.com"
+    assert outbound["tls"]["insecure"] is True
+    assert outbound["tls"]["alpn"] == ["h3"]
 
 
 def test_certificate_sans_are_strings_for_subscription_generation():

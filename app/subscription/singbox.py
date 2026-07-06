@@ -49,10 +49,10 @@ class SingBoxConfiguration(str):
         self.config["outbounds"].append(outbound_data)
 
     def render(self, reverse=False):
-        urltest_types = ["vmess", "vless", "trojan", "shadowsocks", "anytls"]
+        urltest_types = ["vmess", "vless", "trojan", "shadowsocks", "anytls", "hysteria2"]
         urltest_tags = [outbound["tag"]
                         for outbound in self.config["outbounds"] if outbound["type"] in urltest_types]
-        selector_types = ["vmess", "vless", "trojan", "shadowsocks", "anytls", "urltest"]
+        selector_types = ["vmess", "vless", "trojan", "shadowsocks", "anytls", "hysteria2", "urltest"]
         selector_tags = [outbound["tag"]
                          for outbound in self.config["outbounds"] if outbound["type"] in selector_types]
 
@@ -299,6 +299,23 @@ class SingBoxConfiguration(str):
 
         remark = self._remark_validation(remark)
         self.proxy_remarks.append(remark)
+
+        if inbound['protocol'] == 'hysteria':
+            outbound = {
+                "type": "hysteria2",
+                "tag": remark,
+                "server": address,
+                "server_port": inbound["port"],
+                "password": settings["auth"],
+                "tls": self.tls_config(
+                    sni=inbound["sni"],
+                    tls=inbound["tls"],
+                    alpn=alpn.rsplit(sep=",") if alpn else None,
+                    ais=inbound.get("ais", ""),
+                ),
+            }
+            self.add_outbound(outbound)
+            return
 
         outbound = self.make_outbound(
             remark=remark,
