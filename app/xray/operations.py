@@ -214,6 +214,21 @@ def remove_user(dbuser: "DBUser", config_reload_inbounds=None):
         _restart_started_nodes_for_config_reload(config_reload_inbounds)
 
 
+def remove_users_from_runtime(removal_plan):
+    reload_inbounds = set()
+    for user in removal_plan.users:
+        reload_inbounds.update(user.config_reload_inbounds)
+        for inbound_tag in xray.config.inbounds_by_tag:
+            if not _inbound_uses_xray_api(inbound_tag):
+                continue
+            _remove_user_from_inbound(xray.api, inbound_tag, user.email)
+            for node_api in _node_apis_for_inbound(xray.nodes.values(), inbound_tag):
+                _remove_user_from_inbound(node_api, inbound_tag, user.email)
+
+    if reload_inbounds:
+        _restart_started_nodes_for_config_reload(reload_inbounds)
+
+
 def update_user(dbuser: "DBUser", config_reload_inbounds=None):
     user = UserResponse.model_validate(dbuser)
     email = f"{dbuser.id}.{dbuser.username}"
@@ -438,6 +453,7 @@ def restart_node(node_id, config=None):
 __all__ = [
     "add_user",
     "remove_user",
+    "remove_users_from_runtime",
     "add_node",
     "remove_node",
     "connect_node",

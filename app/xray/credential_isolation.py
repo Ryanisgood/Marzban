@@ -7,6 +7,7 @@ from hashlib import sha256
 from app import xray
 from app.models.proxy import ProxySettings, ProxyTypes
 from app.models.user import UserStatus
+from app.xray.config import CONFIG_RELOAD_PROXY_TYPES
 
 RUNNABLE_STATUSES = {UserStatus.active, UserStatus.on_hold}
 
@@ -22,6 +23,19 @@ class CredentialKey:
 class CredentialDuplicate:
     key: CredentialKey
     users: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class UserRemovalSnapshot:
+    id: int
+    username: str
+    email: str
+    config_reload_inbounds: frozenset[str]
+
+
+@dataclass(frozen=True)
+class UserRemovalPlan:
+    users: tuple[UserRemovalSnapshot, ...]
 
 
 class CredentialConflictError(ValueError):
@@ -95,6 +109,24 @@ def validate_unique_credentials(pending_user, users) -> None:
             f"Duplicate {key.protocol} credential on inbound "
             f"{key.inbound_tag} conflicts with user {user.username}"
         )
+
+
+def build_user_removal_plan(users) -> UserRemovalPlan:
+    snapshots = []
+    for user in users:
+        reload_tags: set[str] = set()
+        for proxy in user.proxies:
+            if ProxyTypes(proxy.type) in CONFIG_RELOAD_PROXY_TYPES:
+                reload_tags.update(effective_inbound_tags_for_proxy(proxy))
+        snapshots.append(
+            UserRemovalSnapshot(
+                id=user.id,
+                username=user.username,
+                email=f"{user.id}.{user.username}",
+                config_reload_inbounds=frozenset(reload_tags),
+            )
+        )
+    return UserRemovalPlan(users=tuple(snapshots))
 
 
 def repair_duplicate_credentials(users) -> list[str]:

@@ -584,6 +584,7 @@ def reset_user_data_usage(db: Session, dbuser: User) -> User:
         dbuser.next_plan = None
     db.add(dbuser)
 
+    _validate_user_credentials_if_runnable(db, dbuser)
     db.commit()
     db.refresh(dbuser)
     return dbuser
@@ -622,6 +623,7 @@ def reset_user_by_next(db: Session, dbuser: User) -> User:
     dbuser.next_plan = None
     db.add(dbuser)
 
+    _validate_user_credentials_if_runnable(db, dbuser)
     db.commit()
     db.refresh(dbuser)
     return dbuser
@@ -684,7 +686,8 @@ def reset_all_users_data_usage(db: Session, admin: Optional[Admin] = None):
     if admin:
         query = query.filter(User.admin == admin)
 
-    for dbuser in query.all():
+    dbusers = query.all()
+    for dbuser in dbusers:
         dbuser.used_traffic = 0
         if dbuser.status not in [UserStatus.on_hold, UserStatus.expired, UserStatus.disabled]:
             dbuser.status = UserStatus.active
@@ -694,6 +697,9 @@ def reset_all_users_data_usage(db: Session, admin: Optional[Admin] = None):
             db.delete(dbuser.next_plan)
             dbuser.next_plan = None
         db.add(dbuser)
+
+    for dbuser in dbusers:
+        _validate_user_credentials_if_runnable(db, dbuser)
 
     db.commit()
 
@@ -723,28 +729,31 @@ def activate_all_disabled_users(db: Session, admin: Optional[Admin] = None):
         db (Session): Database session.
         admin (Optional[Admin]): Admin to filter users by, if any.
     """
-    query_for_active_users = db.query(User).filter(User.status == UserStatus.disabled)
-    query_for_on_hold_users = db.query(User).filter(
-        and_(
-            User.status == UserStatus.disabled, User.expire.is_(
-                None), User.on_hold_expire_duration.isnot(None), User.online_at.is_(None)
-        ))
+    query = db.query(User).filter(User.status == UserStatus.disabled)
     if admin:
-        query_for_active_users = query_for_active_users.filter(User.admin == admin)
-        query_for_on_hold_users = query_for_on_hold_users.filter(User.admin == admin)
+        query = query.filter(User.admin == admin)
 
-    query_for_on_hold_users.update(
-        {User.status: UserStatus.on_hold, User.last_status_change: datetime.utcnow()}, synchronize_session=False)
-    query_for_active_users.update(
-        {User.status: UserStatus.active, User.last_status_change: datetime.utcnow()}, synchronize_session=False)
+    now = datetime.utcnow()
+    for dbuser in query.all():
+        if (
+            dbuser.expire is None
+            and dbuser.on_hold_expire_duration is not None
+            and dbuser.online_at is None
+        ):
+            dbuser.status = UserStatus.on_hold
+        else:
+            dbuser.status = UserStatus.active
+        dbuser.last_status_change = now
+        _validate_user_credentials_if_runnable(db, dbuser)
 
     db.commit()
 
 
-def autodelete_expired_users(db: Session,
-                             include_limited_users: bool = False) -> List[User]:
+def get_autodeletable_expired_users(
+        db: Session,
+        include_limited_users: bool = False) -> List[User]:
     """
-    Deletes expired (optionally also limited) users whose auto-delete time has passed.
+    Retrieves expired (optionally also limited) users whose auto-delete time has passed.
 
     Args:
         db (Session): Database session
@@ -752,7 +761,7 @@ def autodelete_expired_users(db: Session,
             Defaults to False.
 
     Returns:
-        list[User]: List of deleted users.
+        list[User]: List of users eligible for auto-delete.
     """
     target_status = (
         [UserStatus.expired] if not include_limited_users
@@ -774,6 +783,22 @@ def autodelete_expired_users(db: Session,
         for (user, auto_delete) in query
         if user.last_status_change + timedelta(days=auto_delete) <= datetime.utcnow()
     ]
+
+
+def autodelete_expired_users(db: Session,
+                             include_limited_users: bool = False) -> List[User]:
+    """
+    Deletes expired (optionally also limited) users whose auto-delete time has passed.
+
+    Args:
+        db (Session): Database session
+        include_limited_users (bool, optional): Whether to delete limited users as well.
+            Defaults to False.
+
+    Returns:
+        list[User]: List of deleted users.
+    """
+    expired_users = get_autodeletable_expired_users(db, include_limited_users)
 
     if expired_users:
         remove_users(db, expired_users)

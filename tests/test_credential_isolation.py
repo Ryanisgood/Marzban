@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app import xray
 from app.db import crud
 from app.db.base import Base
-from app.db.models import Proxy, ProxyInbound, User as DBUser
+from app.db.models import NextPlan, Proxy, ProxyInbound, User as DBUser
 from app.models.proxy import ProxyTypes
 from app.models.user import (
     UserCreate,
@@ -19,6 +19,7 @@ from app.models.user import (
     UserStatus,
 )
 from app.xray.config import XRayConfig
+from app.xray import operations
 import app.xray.credential_isolation as credential_isolation
 from app.xray.credential_isolation import (
     CredentialDuplicate,
@@ -26,6 +27,7 @@ from app.xray.credential_isolation import (
     CredentialKey,
     credential_keys_for_user,
     find_duplicate_credentials,
+    build_user_removal_plan,
     repair_duplicate_credentials,
     validate_unique_credentials,
 )
@@ -500,3 +502,163 @@ def test_update_user_status_rejects_duplicate_when_entering_runnable(
             crud.update_user_status(db, bob, UserStatus.active)
     finally:
         db.close()
+
+
+def test_reset_user_data_usage_rejects_duplicate_activation(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.Trojan, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.limited,
+            proxies=[_proxy(ProxyTypes.Trojan, {"password": "same"})],
+        )
+        bob.used_traffic = 10
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.reset_user_data_usage(db, bob)
+    finally:
+        db.close()
+
+
+def test_reset_user_by_next_rejects_duplicate_activation(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.AnyTLS, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.expired,
+            proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+        )
+        bob.used_traffic = 10
+        bob.data_limit = 20
+        bob.next_plan = NextPlan(
+            data_limit=30,
+            expire=None,
+            add_remaining_traffic=False,
+            fire_on_either=True,
+        )
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.reset_user_by_next(db, bob)
+    finally:
+        db.close()
+
+
+def test_reset_all_users_data_usage_rejects_duplicate_activation(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.Trojan, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.limited,
+            proxies=[_proxy(ProxyTypes.Trojan, {"password": "same"})],
+        )
+        bob.used_traffic = 10
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.reset_all_users_data_usage(db)
+    finally:
+        db.close()
+
+
+def test_activate_all_disabled_users_rejects_duplicate_activation(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.AnyTLS, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.disabled,
+            proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+        )
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.activate_all_disabled_users(db)
+    finally:
+        db.close()
+
+
+def test_build_user_removal_plan_snapshots_runtime_fields_before_delete(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1, "alice", proxies=[_proxy(ProxyTypes.Hysteria, {"auth": "gone"})]
+    )
+
+    plan = build_user_removal_plan([alice])
+
+    assert plan.users[0].id == 1
+    assert plan.users[0].username == "alice"
+    assert plan.users[0].email == "1.alice"
+    assert plan.users[0].config_reload_inbounds == frozenset({"HY2"})
+
+
+def test_remove_users_from_runtime_uses_removal_plan_snapshot(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    monkeypatch.setattr(xray, "nodes", {})
+    removed = []
+    restarted = []
+    monkeypatch.setattr(
+        operations,
+        "_remove_user_from_inbound",
+        lambda api, inbound_tag, email: removed.append((inbound_tag, email)),
+    )
+    monkeypatch.setattr(
+        operations,
+        "_restart_started_nodes_for_config_reload",
+        lambda inbound_tags: restarted.append(set(inbound_tags)),
+    )
+    alice = _user(
+        1, "alice", proxies=[_proxy(ProxyTypes.Hysteria, {"auth": "gone"})]
+    )
+    plan = build_user_removal_plan([alice])
+
+    operations.remove_users_from_runtime(plan)
+
+    removed_tags = {inbound_tag for inbound_tag, email in removed}
+    assert removed_tags == {"VMess", "VLESS", "Trojan", "SS-A", "SS-B", "HY2"}
+    assert {email for inbound_tag, email in removed} == {"1.alice"}
+    assert restarted == [{"HY2"}]
