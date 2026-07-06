@@ -16,6 +16,15 @@ class NodeProvisionProtocol(str, Enum):
 class NodeProvisionInbound(BaseModel):
     protocol: NodeProvisionProtocol
     port: int = Field(ge=1, le=65535)
+    reality_server_name: str | None = None
+
+    @field_validator("reality_server_name")
+    @classmethod
+    def normalize_reality_server_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
 
 class NodeProvisionCreate(BaseModel):

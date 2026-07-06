@@ -20,6 +20,7 @@ from app.models.node import NodeInboundsMode
 from app.models.node_provision import (
     NodeInstallPayload,
     NodeProvisionCreate,
+    NodeProvisionInbound,
     NodeProvisionProtocol,
 )
 from app.xray.config import XRayConfig
@@ -32,6 +33,7 @@ from config import (
 
 
 ProtocolPort = Tuple[NodeProvisionProtocol, int]
+ProvisionInboundSpec = ProtocolPort | NodeProvisionInbound
 _config_apply_lock = threading.RLock()
 _GENERATED_INBOUND_TAG = re.compile(
     r"^node-\d+-(hy2|anytls|vless|vless-reality|shadowsocks)-\d+$"
@@ -68,11 +70,28 @@ def verify_install_token(token: str, token_hash: str) -> bool:
     return hmac.compare_digest(hash_install_token(token), token_hash)
 
 
-def build_generated_inbounds(node_id: int, specs: Sequence[ProtocolPort]) -> list[dict]:
+def build_generated_inbounds(
+    node_id: int, specs: Sequence[ProvisionInboundSpec]
+) -> list[dict]:
+    normalized_specs = [_normalize_inbound_spec(spec) for spec in specs]
     return [
-        _build_inbound(node_id=node_id, protocol=protocol, port=port)
-        for protocol, port in specs
+        _build_inbound(
+            node_id=node_id,
+            protocol=protocol,
+            port=port,
+            reality_server_name=reality_server_name,
+        )
+        for protocol, port, reality_server_name in normalized_specs
     ]
+
+
+def _normalize_inbound_spec(
+    spec: ProvisionInboundSpec,
+) -> tuple[NodeProvisionProtocol, int, str | None]:
+    if isinstance(spec, NodeProvisionInbound):
+        return spec.protocol, spec.port, spec.reality_server_name
+    protocol, port = spec
+    return protocol, port, None
 
 
 def generate_reality_key_pair() -> tuple[str, str] | None:
@@ -83,7 +102,11 @@ def generate_reality_key_pair() -> tuple[str, str] | None:
 
 
 def _build_inbound(
-    *, node_id: int, protocol: NodeProvisionProtocol, port: int
+    *,
+    node_id: int,
+    protocol: NodeProvisionProtocol,
+    port: int,
+    reality_server_name: str | None = None,
 ) -> dict:
     tag_protocol = "vless" if protocol == NodeProvisionProtocol.vless_reality else protocol.value
     tag = f"node-{node_id}-{tag_protocol}-{port}"
@@ -120,6 +143,7 @@ def _build_inbound(
         }
 
     if protocol == NodeProvisionProtocol.vless_reality:
+        server_name = reality_server_name or "www.microsoft.com"
         key_pair = generate_reality_key_pair()
         if not key_pair:
             raise ValueError(
@@ -139,8 +163,8 @@ def _build_inbound(
                     "publicKey": public_key,
                     "privateKey": private_key,
                     "shortIds": [secrets.token_hex(8)],
-                    "serverNames": ["www.microsoft.com"],
-                    "dest": "www.microsoft.com:443",
+                    "serverNames": [server_name],
+                    "dest": f"{server_name}:443",
                     "SpiderX": "/",
                 },
             },
@@ -171,7 +195,7 @@ def provision_node(
     xray_install_url: str = XRAY_INSTALL_SCRIPT_URL,
     sing_box_install_url: str = SING_BOX_INSTALL_SCRIPT_URL,
 ) -> ProvisionNodeResult:
-    specs = [(inbound.protocol, inbound.port) for inbound in payload.inbounds]
+    specs = payload.inbounds
     core_kind = choose_core_kind([inbound.protocol for inbound in payload.inbounds])
     current_config_provider = current_config_provider or (lambda: current_config)
     validate_install_sources(
@@ -404,7 +428,7 @@ def validate_requested_port_conflicts(
     payload: NodeProvisionCreate,
     core_kind: str,
     current_config: dict,
-    specs: Sequence[ProtocolPort],
+    specs: Sequence[ProvisionInboundSpec],
 ) -> None:
     occupied = {}
     for inbound in current_config.get("inbounds", []):
@@ -412,7 +436,7 @@ def validate_requested_port_conflicts(
             occupied.setdefault(endpoint, inbound.get("tag", "<existing>"))
 
     generated_seen = {}
-    for protocol, port in specs:
+    for protocol, port, _ in [_normalize_inbound_spec(spec) for spec in specs]:
         if port == payload.port:
             raise ValueError(
                 f"Generated inbound service port conflict: {protocol.value}:{port} conflicts with node service port"

@@ -123,6 +123,10 @@ const requiredNumberSchema = z.preprocess(
   z.coerce.number()
 );
 const portSchema = requiredNumberSchema.pipe(z.number().int().min(1).max(65535));
+const optionalHostnameSchema = z.preprocess(
+  (value) => (typeof value === "string" ? value.trim() : value),
+  z.string().regex(/^[A-Za-z0-9.-]+$/, "Invalid hostname").optional().or(z.literal(""))
+);
 const numberInputValue = (value: unknown) => (value == null ? "" : String(value));
 const parseNumberInput = (value: string | number) =>
   value === "" ? "" : Number(value);
@@ -182,6 +186,7 @@ const ProvisionNodeFormSchema = z
     anytls_port: z.unknown(),
     vless_reality: z.boolean(),
     vless_reality_port: z.unknown(),
+    vless_reality_server_name: optionalHostnameSchema,
     shadowsocks: z.boolean(),
     shadowsocks_port: z.unknown(),
   })
@@ -545,6 +550,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
       anytls_port: 443,
       vless_reality: false,
       vless_reality_port: 443,
+      vless_reality_server_name: "www.microsoft.com",
       shadowsocks: false,
       shadowsocks_port: 8388,
     },
@@ -610,6 +616,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
       inbounds.push({
         protocol: "vless-reality",
         port: Number(values.vless_reality_port),
+        reality_server_name: values.vless_reality_server_name || undefined,
       });
     }
     if (values.shadowsocks) {
@@ -673,7 +680,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                   <CustomInput
                     label={t("nodes.nodeName")}
                     size="sm"
-                    placeholder="rn1c1g"
+                    placeholder={t("nodes.nodeNamePlaceholder")}
                     error={provisionForm.formState.errors.name?.message}
                     {...provisionForm.register("name", { required: true })}
                   />
@@ -682,7 +689,7 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                   <CustomInput
                     label={t("nodes.nodeAddress")}
                     size="sm"
-                    placeholder="203.0.113.10"
+                    placeholder={t("nodes.nodeAddressPlaceholder")}
                     error={provisionForm.formState.errors.address?.message}
                     {...provisionForm.register("address", { required: true })}
                   />
@@ -805,6 +812,25 @@ const AddNodeForm: FC<AddNodeFormType> = ({
                             />
                           </Box>
                         </HStack>
+                        {option.key === "vless_reality" && (
+                          <Box mt={2} maxW={{ base: "full", md: "320px" }}>
+                            <CustomInput
+                              label={t("nodes.realityServerName")}
+                              size="sm"
+                              placeholder="www.microsoft.com"
+                              disabled={!enabled}
+                              error={
+                                enabled
+                                  ? provisionForm.formState.errors
+                                      .vless_reality_server_name?.message
+                                  : undefined
+                              }
+                              {...provisionForm.register(
+                                "vless_reality_server_name"
+                              )}
+                            />
+                          </Box>
+                        )}
                       </Box>
                     );
                   })}

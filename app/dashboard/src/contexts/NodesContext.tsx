@@ -74,6 +74,7 @@ export const NodeProvisionSchema = z.object({
     z.object({
       protocol: NodeProvisionProtocolSchema,
       port: z.number().or(z.string().transform((v) => parseFloat(v))),
+      reality_server_name: z.string().optional(),
     })
   ),
 });

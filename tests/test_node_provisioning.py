@@ -165,6 +165,31 @@ def test_vless_reality_inbound_generation_rejects_missing_x25519_keys(monkeypatc
         raise AssertionError("expected VLESS REALITY provisioning to reject missing keys")
 
 
+def test_build_generated_inbounds_uses_custom_vless_reality_server_name(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
+    monkeypatch.setattr(
+        provisioning,
+        "generate_reality_key_pair",
+        lambda: ("real-private-key", "real-public-key"),
+    )
+
+    inbounds = build_generated_inbounds(
+        node_id=42,
+        specs=[
+            NodeProvisionInbound(
+                protocol=NodeProvisionProtocol.vless_reality,
+                port=443,
+                reality_server_name="cdn.example.com",
+            )
+        ],
+    )
+
+    reality_settings = inbounds[0]["streamSettings"]["realitySettings"]
+    assert reality_settings["serverNames"] == ["cdn.example.com"]
+    assert reality_settings["dest"] == "cdn.example.com:443"
+
+
 def test_generated_inbounds_are_visible_to_xray_config():
     config = {
         "inbounds": build_generated_inbounds(
