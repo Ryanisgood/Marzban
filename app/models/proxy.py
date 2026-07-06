@@ -230,3 +230,4 @@ class ProxyInbound(BaseModel):
     network: str
     tls: str
     port: Union[int, str]
+    owner_node_id: Union[int, None] = None

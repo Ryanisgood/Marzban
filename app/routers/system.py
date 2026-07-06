@@ -63,10 +63,28 @@ def get_system_stats(
     )
 
 
+def build_inbounds_response(db: Session) -> Dict[ProxyTypes, List[dict]]:
+    tags = [
+        inbound["tag"]
+        for inbound_list in xray.config.inbounds_by_protocol.values()
+        for inbound in inbound_list
+    ]
+    owner_ids = crud.get_inbound_owner_ids(db, tags)
+    return {
+        protocol: [
+            {**inbound, "owner_node_id": owner_ids.get(inbound["tag"])}
+            for inbound in inbound_list
+        ]
+        for protocol, inbound_list in xray.config.inbounds_by_protocol.items()
+    }
+
+
 @router.get("/inbounds", response_model=Dict[ProxyTypes, List[ProxyInbound]])
-def get_inbounds(admin: Admin = Depends(Admin.get_current)):
+def get_inbounds(
+    db: Session = Depends(get_db), admin: Admin = Depends(Admin.get_current)
+):
     """Retrieve inbound configurations grouped by protocol."""
-    return xray.config.inbounds_by_protocol
+    return build_inbounds_response(db)
 
 
 @router.get(
