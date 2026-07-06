@@ -15,6 +15,7 @@ from app.xray.credential_isolation import (
     CredentialKey,
     credential_keys_for_user,
     find_duplicate_credentials,
+    repair_duplicate_credentials,
 )
 
 
@@ -233,6 +234,8 @@ def test_duplicate_repr_does_not_include_raw_credential(monkeypatch):
         (ProxyTypes.VLESS, {}),
         (ProxyTypes.Trojan, {}),
         (ProxyTypes.AnyTLS, {}),
+        (ProxyTypes.AnyTLS, None),
+        (ProxyTypes.AnyTLS, []),
         (ProxyTypes.Hysteria, {}),
         (ProxyTypes.Shadowsocks, {"method": "chacha20-ietf-poly1305"}),
         (ProxyTypes.Shadowsocks, {"password": "missing-method"}),
@@ -246,3 +249,20 @@ def test_malformed_proxy_credentials_are_skipped(
 
     assert credential_keys_for_user(user) == ()
     assert find_duplicate_credentials([user]) == []
+
+
+def test_repair_duplicate_credentials_rotates_all_but_one_user(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    alice = _user(
+        1, "alice", proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})]
+    )
+    bob = _user(
+        2, "bob", proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})]
+    )
+
+    repaired = repair_duplicate_credentials([alice, bob])
+
+    assert repaired == ["bob"]
+    assert alice.proxies[0].settings["password"] == "same"
+    assert bob.proxies[0].settings["password"] != "same"
+    assert find_duplicate_credentials([alice, bob]) == []
