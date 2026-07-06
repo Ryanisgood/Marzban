@@ -49,6 +49,155 @@ curl -fsSL https://controller.example.com/api/node/install.sh | sudo bash -s -- 
 - TLS and REALITY support through the inherited Marzban configuration model.
 - Telegram bot, webhook notifications, backup helpers, and `marzban-cli`.
 
+## Installation
+
+MarzbanX can be installed in two practical ways today:
+
+- build a local Docker image from this repository;
+- run from source with a systemd service.
+
+The checked-in `docker-compose.yml` still points to the original upstream image for compatibility with the inherited project layout. Until MarzbanX images are published under the final repository name, prefer the local-build Docker flow below.
+
+### Requirements
+
+- A Linux server with root access.
+- Python 3.12 for source installs, or Docker for container installs.
+- Node.js 16+ only when rebuilding the dashboard assets.
+- A domain and TLS certificate for public dashboard access.
+- Open firewall ports for the dashboard/API and every proxy inbound you create.
+
+### Docker: Local Image
+
+Clone the repository and prepare the env file:
+
+```bash
+git clone https://github.com/Ryanisgood/MarzbanX.git
+cd MarzbanX
+cp .env.example .env
+nano .env
+```
+
+Build the dashboard assets before building the image:
+
+```bash
+cd app/dashboard
+npm ci
+VITE_BASE_API=/api/ npm run build --if-present -- --outDir build --assetsDir statics
+cp ./build/index.html ./build/404.html
+cd ../..
+```
+
+Build and run the controller image:
+
+```bash
+docker build -t marzbanx:local .
+docker run -d \
+  --name marzbanx \
+  --restart always \
+  --network host \
+  --env-file .env \
+  -v /var/lib/marzban:/var/lib/marzban \
+  marzbanx:local
+```
+
+Create the first sudo admin:
+
+```bash
+docker exec -it marzbanx python /code/marzban-cli.py admin create --sudo
+```
+
+Some packaged installs expose a `marzban cli` wrapper, but the source tree always includes `marzban-cli.py`.
+
+The dashboard is available on the configured Uvicorn port, default:
+
+```text
+http://SERVER_IP:8000/dashboard/
+```
+
+For production, put Nginx, Caddy, or another reverse proxy with TLS in front of the controller.
+
+### Source Install
+
+Install Xray on the controller host:
+
+```bash
+bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+```
+
+Clone and install Python dependencies:
+
+```bash
+git clone https://github.com/Ryanisgood/MarzbanX.git
+cd MarzbanX
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip setuptools
+python -m pip install -r requirements.txt
+cp .env.example .env
+nano .env
+alembic upgrade head
+```
+
+Build dashboard assets:
+
+```bash
+cd app/dashboard
+npm ci
+VITE_BASE_API=/api/ npm run build --if-present -- --outDir build --assetsDir statics
+cp ./build/index.html ./build/404.html
+cd ../..
+```
+
+Start the controller:
+
+```bash
+python main.py
+```
+
+Create the first sudo admin from another shell in the same virtualenv:
+
+```bash
+. .venv/bin/activate
+python marzban-cli.py admin create --sudo
+```
+
+To install a simple systemd service from the source checkout:
+
+```bash
+sudo ./install_service.sh
+sudo systemctl enable --now marzban
+```
+
+The helper service keeps the inherited runtime name `marzban`. Check logs with:
+
+```bash
+sudo journalctl -u marzban -f
+```
+
+### Reverse Proxy Example
+
+Example Nginx configuration for the dashboard and API:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name panel.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/panel.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/panel.example.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+Set `XRAY_SUBSCRIPTION_URL_PREFIX=https://panel.example.com` in `.env` when subscription links must use the public domain.
+
 ## Node Provisioning Flow
 
 The intended MarzbanX node flow is:
@@ -69,6 +218,15 @@ XRAY_INSTALL_SCRIPT_URL=https://github.com/XTLS/Xray-install/raw/main/install-re
 ```
 
 `MARZBAN_NODE_BINARY_URL` should point to the Rust `MarzbanX-node` binary built for the target Linux architecture. `SING_BOX_INSTALL_SCRIPT_URL` is required for HY2, AnyTLS, or any sing-box-selected combination unless sing-box is already installed on the node.
+
+Before using the Add Node wizard in production:
+
+1. Build or download the `MarzbanX-node` Linux binary.
+2. Host it at the HTTPS URL configured in `MARZBAN_NODE_BINARY_URL`.
+3. Host a reviewed sing-box installer at `SING_BOX_INSTALL_SCRIPT_URL`, or preinstall sing-box on node images.
+4. Make sure new nodes can reach the controller API over HTTPS.
+5. Open `SERVICE_PORT/tcp`, default `62050`, from the controller to the node.
+6. Open every selected public proxy port, for example `8443/udp` for HY2.
 
 ## Core Policy
 
@@ -104,32 +262,9 @@ VMess/Trojan provisioning and a fuller protocol-switching assistant remain roadm
 
 HY2 and AnyTLS are config-reload protocols in this fork. Creating, editing, removing, or migrating users for these protocols rebuilds the sing-box config and restarts affected nodes. The dashboard warns that active connections can briefly interrupt.
 
-## Manual Development Setup
+## Dashboard Development
 
-Use this when developing the fork from source:
-
-```bash
-git clone https://github.com/Ryanisgood/MarzbanX.git
-cd MarzbanX
-python3 -m pip install -r requirements.txt
-alembic upgrade head
-cp .env.example .env
-python3 main.py
-```
-
-Then create a sudo admin:
-
-```bash
-marzban cli admin create --sudo
-```
-
-The dashboard is available at:
-
-```text
-http://localhost:8000/dashboard/
-```
-
-For dashboard development:
+Run the dashboard dev server when working on frontend code:
 
 ```bash
 cd app/dashboard
@@ -149,6 +284,10 @@ Most upstream Marzban settings still apply. Important MarzbanX node-related sett
 | `XRAY_JSON` | Controller core config file where generated inbounds are written. |
 | `XRAY_EXECUTABLE_PATH` | Local Xray binary path for the controller. |
 | `XRAY_ASSETS_PATH` | Local Xray assets path for the controller. |
+| `XRAY_SUBSCRIPTION_URL_PREFIX` | Public base URL used in generated subscription links. |
+| `SQLALCHEMY_DATABASE_URL` | Database URL. Defaults to SQLite when not configured. |
+| `UVICORN_HOST` | Controller bind host. Defaults to `0.0.0.0`. |
+| `UVICORN_PORT` | Controller bind port. Defaults to `8000`. |
 | `DOCS` | Set to `True` to expose Swagger/ReDoc at `/docs` and `/redoc`. |
 
 For the full inherited configuration surface, inspect [.env.example](./.env.example) and [config.py](./config.py).
