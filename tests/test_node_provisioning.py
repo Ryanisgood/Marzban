@@ -328,6 +328,43 @@ def test_provision_node_creates_config_hosts_panel_node_and_install_command(monk
     assert hy2_host.alpn.value == "h3"
 
 
+def test_provision_node_sets_generated_inbound_owner_id(monkeypatch):
+    import app.xray.node_provisioning as provisioning
+
+    db = _db_session()
+    monkeypatch.setattr(
+        provisioning,
+        "generate_reality_key_pair",
+        lambda: ("real-private-key", "real-public-key"),
+    )
+    payload = NodeProvisionCreate(
+        name="owned-node",
+        address="203.0.113.10",
+        inbounds=[
+            NodeProvisionInbound(protocol=NodeProvisionProtocol.vless_reality, port=443),
+        ],
+    )
+
+    result = provision_node(
+        db,
+        payload,
+        admin_username="admin",
+        controller_url="https://panel.example.com",
+        current_config={
+            "log": {"loglevel": "warning"},
+            "inbounds": [],
+            "outbounds": [{"tag": "DIRECT", "protocol": "freedom"}],
+        },
+        apply_config=lambda config: None,
+        binary_url="https://panel.example.com/download/marzban-node",
+        xray_install_url="https://panel.example.com/download/install-xray.sh",
+        sing_box_install_url="https://panel.example.com/download/install-sing-box.sh",
+    )
+
+    inbound = db.query(ProxyInbound).filter_by(tag=result.active_inbounds[0]).one()
+    assert inbound.owner_node_id == result.node.id
+
+
 def test_provision_node_does_not_apply_config_when_token_creation_fails(monkeypatch):
     import app.xray.node_provisioning as provisioning
 

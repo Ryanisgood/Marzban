@@ -224,6 +224,12 @@ class ProxyInbound(Base):
 
     id = Column(Integer, primary_key=True)
     tag = Column(String(256), unique=True, nullable=False, index=True)
+    owner_node_id = Column(
+        Integer, ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    owner_node = relationship(
+        "Node", back_populates="owned_inbounds", foreign_keys=[owner_node_id]
+    )
     hosts = relationship(
         "ProxyHost", back_populates="inbound", cascade="all, delete-orphan"
     )
@@ -325,6 +331,11 @@ class Node(Base):
     usage_coefficient = Column(Float, nullable=False, server_default=text("1.0"), default=1)
     active_inbound_objects = relationship(
         "ProxyInbound", secondary=node_inbounds_association
+    )
+    owned_inbounds = relationship(
+        "ProxyInbound",
+        back_populates="owner_node",
+        foreign_keys="ProxyInbound.owner_node_id",
     )
 
     @property

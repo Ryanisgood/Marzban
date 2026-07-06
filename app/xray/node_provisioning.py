@@ -230,7 +230,7 @@ def provision_node(
 
         inbound_rows = []
         for inbound, inbound_spec in zip(generated_inbounds, payload.inbounds):
-            inbound_row = ProxyInbound(tag=inbound["tag"])
+            inbound_row = ProxyInbound(tag=inbound["tag"], owner_node_id=dbnode.id)
             is_sing_box_tls = inbound_spec.protocol in SING_BOX_ONLY_PROVISION_PROTOCOLS
             is_hy2 = inbound_spec.protocol == NodeProvisionProtocol.hy2
             db.add(inbound_row)
