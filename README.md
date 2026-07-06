@@ -1,451 +1,195 @@
-<p align="center">
-  <a href="https://github.com/gozargah/marzban" target="_blank" rel="noopener noreferrer">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://github.com/Gozargah/Marzban-docs/raw/master/screenshots/logo-dark.png">
-      <img width="160" height="160" src="https://github.com/Gozargah/Marzban-docs/raw/master/screenshots/logo-light.png">
-    </picture>
-  </a>
-</p>
+# MarzbanX
 
-<h1 align="center"/>Marzban</h1>
+Controller-first proxy management panel based on [Gozargah/Marzban](https://github.com/Gozargah/Marzban), with focused work on node provisioning, panel-managed node protocols, HY2/sing-box support, and Rust node diagnostics.
 
-<p align="center">
-    Unified GUI Censorship Resistant Solution Powered by <a href="https://github.com/XTLS/Xray-core">Xray</a>
-</p>
+> Runtime compatibility note: this fork still keeps many upstream runtime names such as `marzban`, `marzban-cli`, `/var/lib/marzban`, and the existing service names for upgrade compatibility. The public project name is MarzbanX.
 
-<br/>
-<p align="center">
-    <a href="#">
-        <img src="https://img.shields.io/github/actions/workflow/status/gozargah/marzban/build.yml?style=flat-square" />
-    </a>
-    <a href="https://hub.docker.com/r/gozargah/marzban" target="_blank">
-        <img src="https://img.shields.io/docker/pulls/gozargah/marzban?style=flat-square&logo=docker" />
-    </a>
-    <a href="#">
-        <img src="https://img.shields.io/github/license/gozargah/marzban?style=flat-square" />
-    </a>
-    <a href="https://t.me/gozargah_marzban" target="_blank">
-        <img src="https://img.shields.io/badge/telegram-group-blue?style=flat-square&logo=telegram" />
-    </a>
-    <a href="#">
-        <img src="https://img.shields.io/badge/twitter-commiunity-blue?style=flat-square&logo=twitter" />
-    </a>
-    <a href="#">
-        <img src="https://img.shields.io/github/stars/gozargah/marzban?style=social" />
-    </a>
-</p>
+## Languages
 
-<p align="center">
- <a href="./README.md">
- English
- </a>
- /
- <a href="./README-fa.md">
- فارسی
- </a>
-  /
-  <a href="./README-zh-cn.md">
- 简体中文
- </a>
-   /
-  <a href="./README-ru.md">
- Русский
- </a>
-</p>
+[English](./README.md) / [简体中文](./README-zh-cn.md) / [فارسی](./README-fa.md) / [Русский](./README-ru.md)
 
-<p align="center">
-  <a href="https://github.com/gozargah/marzban" target="_blank" rel="noopener noreferrer" >
-    <img src="https://github.com/Gozargah/Marzban-docs/raw/master/screenshots/preview.png" alt="Marzban screenshots" width="600" height="auto">
-  </a>
-</p>
+## Project Links
 
-## Table of Contents
+- Current fork: [Ryanisgood/MarzbanX](https://github.com/Ryanisgood/MarzbanX)
+- Original upstream: [Gozargah/Marzban](https://github.com/Gozargah/Marzban)
+- Rust node runtime: [MarzbanX-node](../MarzbanX-node)
+- Node provisioning notes: [docs/node-provisioning.md](./docs/node-provisioning.md)
+- CLI notes: [cli/README.md](./cli/README.md)
 
-- [Overview](#overview)
-  - [Why using Marzban?](#why-using-marzban)
-    - [Features](#features)
-- [Installation guide](#installation-guide)
-- [Configuration](#configuration)
-- [Documentation](#documentation)
-- [API](#api)
-- [Backup](#backup)
-- [Telegram Bot](#telegram-bot)
-- [Marzban CLI](#marzban-cli)
-- [Marzban Node](#marzban-node)
-- [Webhook notifications](#webhook-notifications)
-- [Donation](#donation)
-- [License](#license)
-- [Contributors](#contributors)
+## What MarzbanX Changes
 
-# Overview
+MarzbanX keeps the Marzban controller model, REST API, dashboard, subscription templates, user management, Telegram bot, and CLI, then extends the node workflow so node protocol selection is owned by the panel instead of by manual SSH edits.
 
-Marzban (the Persian word for "border guard" - pronounced /mærz'ban/) is a proxy management tool that provides a simple and easy-to-use user interface for managing hundreds of proxy accounts powered by [Xray-core](https://github.com/XTLS/Xray-core) and built using Python and Reactjs.
+Recent changes in this fork focus on:
 
-## Why using Marzban?
+- panel-managed node inbound selection through `node.active_inbounds`;
+- Add Node provisioning that generates inbounds, hosts, a panel-mode node, and a one-time install command;
+- deterministic core selection: sing-box for sing-box-only protocols, Xray for Xray-compatible selections;
+- Rust node support for controller-managed inbounds;
+- runtime status reporting, including node version, installed cores, current core, memory, listening ports, configured inbound ports, and last restart time;
+- HY2/Hysteria2 and AnyTLS user changes that rebuild sing-box config and restart only affected nodes where possible;
+- safer provisioning lifecycle with validation, rollback, token retry behavior, and port conflict checks.
 
-Marzban is user-friendly, feature-rich and reliable. It lets you to create different proxies for your users without any complicated configuration. Using its built-in web UI, you are able to monitor, modify and limit users.
+## Features
 
-### Features
-
-- Built-in **Web UI**
-- Fully **REST API** backend
-- [**Multiple Nodes**](#marzban-node) support (for infrastructure distribution & scalability)
-- Supports protocols **Vmess**, **VLESS**, **Trojan** and **Shadowsocks**
-- **Multi-protocol** for a single user
-- **Multi-user** on a single inbound
-- **Multi-inbound** on a **single port** (fallbacks support)
-- **Traffic** and **expiry date** limitations
-- **Periodic** traffic limit (e.g. daily, weekly, etc.)
-- **Subscription link** compatible with **V2ray** _(such as V2RayNG, SingBox, Nekoray, etc.)_, **Clash** and **ClashMeta**
-- Automated **Share link** and **QRcode** generator
-- System monitoring and **traffic statistics**
-- Customizable xray configuration
-- **TLS** and **REALITY** support
-- Integrated **Telegram Bot**
-- Integrated **Command Line Interface (CLI)**
-- **Multi-language**
-- **Multi-admin** support (WIP)
-
-# Installation guide
-
-Run the following command to install Marzban with SQLite database:
+- Web dashboard and REST API for users, admins, nodes, hosts, and subscriptions.
+- Multi-node deployment through the Rust [MarzbanX-node](../MarzbanX-node) runtime.
+- Panel-managed node mode: the controller sends selected inbound tags to the node, so new nodes do not need manual `INBOUNDS` editing.
+- Add Node wizard that creates generated inbounds and shows a one-command installer:
 
 ```bash
-sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install
+curl -fsSL https://controller.example.com/api/node/install.sh | sudo bash -s -- --token xxx
 ```
 
-Run the following command to install Marzban with MySQL database:
+- Supported provisioning templates in this fork: HY2/Hysteria2, AnyTLS, VLESS TCP REALITY, and Shadowsocks TCP.
+- Core policy visibility: expected core, actual core, reason, Xray API availability, and whether restart is required.
+- Node diagnostics: installed Xray/sing-box versions, local sockets, configured inbound ports, memory use, node version, and restart timestamp.
+- Traffic and expiry limits, periodic traffic reset, multi-user and multi-protocol account support.
+- Subscription output for V2Ray-compatible clients, sing-box, Clash, Clash Meta, and related clients.
+- TLS and REALITY support through the inherited Marzban configuration model.
+- Telegram bot, webhook notifications, backup helpers, and `marzban-cli`.
+
+## Node Provisioning Flow
+
+The intended MarzbanX node flow is:
+
+1. Open the dashboard node modal.
+2. Use Add Node instead of the advanced manual form.
+3. Enter node name, address, management ports, protocol selection, and public inbound ports.
+4. The controller creates generated inbounds, matching hosts, a panel-managed node, and a short-lived install token.
+5. Run the generated command on the new server.
+6. The Rust node installs or uses the required core, starts `marzban-node.service`, and receives active inbound tags from the controller.
+
+For production provisioning, configure these controller variables:
+
+```env
+MARZBAN_NODE_BINARY_URL=https://controller.example.com/downloads/marzban-node
+SING_BOX_INSTALL_SCRIPT_URL=https://controller.example.com/downloads/install-sing-box.sh
+XRAY_INSTALL_SCRIPT_URL=https://github.com/XTLS/Xray-install/raw/main/install-release.sh
+```
+
+`MARZBAN_NODE_BINARY_URL` should point to the Rust `MarzbanX-node` binary built for the target Linux architecture. `SING_BOX_INSTALL_SCRIPT_URL` is required for HY2, AnyTLS, or any sing-box-selected combination unless sing-box is already installed on the node.
+
+## Core Policy
+
+MarzbanX starts one proxy core per node config:
+
+- if active inbounds contain HY2/Hysteria2 or AnyTLS, the expected core is `sing-box`;
+- otherwise the expected core is `xray`;
+- Xray API is injected only for Xray-selected configs;
+- sing-box nodes do not expose the Xray API, so usage collection skips Xray usage API calls for those nodes.
+
+The dashboard exposes the decision instead of hiding it behind ports and logs:
+
+- current core;
+- expected core;
+- reason, such as `INBOUNDS contains sing-box-only protocol`;
+- Xray API availability;
+- restart-required state;
+- active inbound details with public ports and user counts.
+
+## Protocol Switching
+
+Panel-managed nodes can be edited from the dashboard by changing their active inbound selection. The controller validates:
+
+- selected inbound tags exist;
+- required hosts exist when needed;
+- selected public ports do not conflict on the same bind/transport;
+- the selected protocol set is supported by the required core;
+- the node has reported whether the required core is installed.
+
+VMess/Trojan provisioning and a fuller protocol-switching assistant remain roadmap items. The Rust node already contains sing-box translation support for several protocols, but the dashboard wizard currently exposes the provisioning templates listed above.
+
+## HY2 And AnyTLS User Updates
+
+HY2 and AnyTLS are config-reload protocols in this fork. Creating, editing, removing, or migrating users for these protocols rebuilds the sing-box config and restarts affected nodes. The dashboard warns that active connections can briefly interrupt.
+
+## Manual Development Setup
+
+Use this when developing the fork from source:
 
 ```bash
-sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install --database mysql
+git clone https://github.com/Ryanisgood/MarzbanX.git
+cd MarzbanX
+python3 -m pip install -r requirements.txt
+alembic upgrade head
+cp .env.example .env
+python3 main.py
 ```
 
-Run the following command to install Marzban with MariaDB database:
-```bash
-sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install --database mariadb
-```
-
-Once the installation is complete:
-
-- You will see the logs that you can stop watching them by closing the terminal or pressing `Ctrl+C`
-- The Marzban files will be located at `/opt/marzban`
-- The configuration file can be found at `/opt/marzban/.env` (refer to [configurations](#configuration) section to see variables)
-- The data files will be placed at `/var/lib/marzban`
-- For security reasons, the Marzban dashboard is not accessible via IP address. Therefore, you must [obtain SSL certificate](https://gozargah.github.io/marzban/en/examples/issue-ssl-certificate) and access your Marzban dashboard by opening a web browser and navigating to `https://YOUR_DOMAIN:8000/dashboard/` (replace YOUR_DOMAIN with your actual domain)
-- You can also use SSH port forwarding to access the Marzban dashboard locally without a domain. Replace `user@serverip` with your actual SSH username and server IP and Run the command below:
-
-```bash
-ssh -L 8000:localhost:8000 user@serverip
-```
-
-Finally, you can enter the following link in your browser to access your Marzban dashboard:
-
-http://localhost:8000/dashboard/
-
-You will lose access to the dashboard as soon as you close the SSH terminal. Therefore, this method is recommended only for testing purposes.
-
-Next, you need to create a sudo admin for logging into the Marzban dashboard by the following command
+Then create a sudo admin:
 
 ```bash
 marzban cli admin create --sudo
 ```
 
-That's it! You can login to your dashboard using these credentials
+The dashboard is available at:
 
-To see the help message of the Marzban script, run the following command
+```text
+http://localhost:8000/dashboard/
+```
+
+For dashboard development:
 
 ```bash
-marzban --help
+cd app/dashboard
+npm ci
+npm run dev
 ```
 
-If you are eager to run the project using the source code, check the section below
-<details markdown="1">
-<summary><h3>Manual install (advanced)</h3></summary>
+## Configuration
 
-Install xray on your machine
+Most upstream Marzban settings still apply. Important MarzbanX node-related settings:
 
-You can install it using [Xray-install](https://github.com/XTLS/Xray-install)
+| Variable | Description |
+| --- | --- |
+| `MARZBAN_NODE_BINARY_URL` | Download URL for the Rust node binary used by the one-command installer. |
+| `SING_BOX_INSTALL_SCRIPT_URL` | Install script URL for sing-box nodes. Required for HY2/AnyTLS provisioning unless sing-box is preinstalled. |
+| `XRAY_INSTALL_SCRIPT_URL` | Install script URL for Xray nodes. Defaults to the upstream Xray installer. |
+| `XRAY_JSON` | Controller core config file where generated inbounds are written. |
+| `XRAY_EXECUTABLE_PATH` | Local Xray binary path for the controller. |
+| `XRAY_ASSETS_PATH` | Local Xray assets path for the controller. |
+| `DOCS` | Set to `True` to expose Swagger/ReDoc at `/docs` and `/redoc`. |
+
+For the full inherited configuration surface, inspect [.env.example](./.env.example) and [config.py](./config.py).
+
+## API
+
+Set `DOCS=True`, then open:
+
+- `/docs`
+- `/redoc`
+
+Node provisioning endpoints include:
+
+- `POST /api/node/provision`
+- `GET /api/node/install.sh`
+- `POST /api/node/provision/redeem`
+
+## Verification
+
+Useful checks for the current node work:
 
 ```bash
-bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+python -m pytest tests/test_node_provisioning.py tests/test_node_active_inbounds.py tests/test_hysteria_support.py -q
+bash build_dashboard.sh
+XRAY_EXECUTABLE_PATH=/bin/echo alembic heads
 ```
 
-Clone this project and install the dependencies (you need Python >= 3.8)
+## Roadmap
 
-```bash
-git clone https://github.com/Gozargah/Marzban.git
-cd Marzban
-wget -qO- https://bootstrap.pypa.io/get-pip.py | python3 -
-python3 -m pip install -r requirements.txt
-```
+- Rename remaining runtime/package/image names from Marzban to MarzbanX where it can be done without breaking upgrades.
+- Expand the Add Node wizard to VMess and Trojan where controller validation and node translation are complete.
+- Add richer firewall/reachability checks before applying protocol switches.
+- Add token rotation or reissue flow for provisioned nodes.
+- Publish MarzbanX and MarzbanX-node release artifacts under the final repository names.
 
-Alternatively, to have an isolated environment you can use [Python Virtualenv](https://pypi.org/project/virtualenv/)
+## Attribution
 
-Then run the following command to run the database migration scripts
+MarzbanX is a fork of [Gozargah/Marzban](https://github.com/Gozargah/Marzban). The upstream project, contributors, and AGPL-3.0 license remain the foundation of this fork.
 
-```bash
-alembic upgrade head
-```
+Donation addresses from the upstream README were intentionally removed from this fork README.
 
-If you want to use `marzban-cli`, you should link it to a file in your `$PATH`, make it executable, and install the auto-completion:
+## License
 
-```bash
-sudo ln -s $(pwd)/marzban-cli.py /usr/bin/marzban-cli
-sudo chmod +x /usr/bin/marzban-cli
-marzban-cli completion install
-```
-
-Now it's time to configuration
-
-Make a copy of `.env.example` file, take a look and edit it using a text editor like `nano`.
-
-You probably like to modify the admin credentials.
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-> Check [configurations](#configuration) section for more information
-
-Eventually, launch the application using command below
-
-```bash
-python3 main.py
-```
-
-To launch with linux systemctl (copy marzban.service file to `/var/lib/marzban/marzban.service`)
-
-```
-systemctl enable /var/lib/marzban/marzban.service
-systemctl start marzban
-```
-
-To use with nginx
-
-```
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name  example.com;
-
-    ssl_certificate      /etc/letsencrypt/live/example.com/fullchain.pem;
-    ssl_certificate_key  /etc/letsencrypt/live/example.com/privkey.pem;
-
-    location ~* /(dashboard|statics|sub|api|docs|redoc|openapi.json) {
-        proxy_pass http://0.0.0.0:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-
-    # xray-core ws-path: /
-    # client ws-path: /marzban/me/2087
-    #
-    # All traffic is proxed through port 443, and send to the xray port(2087, 2088 etc.).
-    # The '/marzban' in location regex path can changed any characters by yourself.
-    #
-    # /${path}/${username}/${xray-port}
-    location ~* /marzban/.+/(.+)$ {
-        proxy_redirect off;
-        proxy_pass http://127.0.0.1:$1/;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $http_host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
-```
-
-or
-
-```
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-    server_name  marzban.example.com;
-
-    ssl_certificate      /etc/letsencrypt/live/example.com/fullchain.pem;
-    ssl_certificate_key  /etc/letsencrypt/live/example.com/privkey.pem;
-
-    location / {
-        proxy_pass http://0.0.0.0:8000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
-```
-
-By default the app will be run on `http://localhost:8000/dashboard`. You can configure it using changing the `UVICORN_HOST` and `UVICORN_PORT` environment variables.
-</details>
-
-# Configuration
-
-> You can set settings below using environment variables or placing them in `.env` file.
-
-| Variable                                 | Description                                                                                                              |
-| ---------------------------------------- |--------------------------------------------------------------------------------------------------------------------------|
-| SUDO_USERNAME                            | Superuser's username                                                                                                     |
-| SUDO_PASSWORD                            | Superuser's password                                                                                                     |
-| SQLALCHEMY_DATABASE_URL                  | Database URL ([SQLAlchemy's docs](https://docs.sqlalchemy.org/en/20/core/engines.html#database-urls))                    |
-| UVICORN_HOST                             | Bind application to this host (default: `0.0.0.0`)                                                                       |
-| UVICORN_PORT                             | Bind application to this port (default: `8000`)                                                                          |
-| UVICORN_UDS                              | Bind application to a UNIX domain socket                                                                                 |
-| UVICORN_SSL_CERTFILE                     | SSL certificate file to have application on https                                                                        |
-| UVICORN_SSL_KEYFILE                      | SSL key file to have application on https                                                                                |
-| UVICORN_SSL_CA_TYPE                      | Type of authority SSL certificate. Use `private` for testing self-signed CA (default: `public`)                          |
-| XRAY_JSON                                | Path of Xray's json config file (default: `xray_config.json`)                                                            |
-| XRAY_EXECUTABLE_PATH                     | Path of Xray binary (default: `/usr/local/bin/xray`)                                                                     |
-| XRAY_ASSETS_PATH                         | Path of Xray assets (default: `/usr/local/share/xray`)                                                                   |
-| XRAY_SUBSCRIPTION_URL_PREFIX             | Prefix of subscription URLs                                                                                              |
-| XRAY_FALLBACKS_INBOUND_TAG               | Tag of the inbound that includes fallbacks, needed in the case you're using fallbacks                                    |
-| XRAY_EXCLUDE_INBOUND_TAGS                | Tags of the inbounds that shouldn't be managed and included in links by application                                      |
-| CUSTOM_TEMPLATES_DIRECTORY               | Customized templates directory (default: `app/templates`)                                                                |
-| CLASH_SUBSCRIPTION_TEMPLATE              | The template that will be used for generating clash configs (default: `clash/default.yml`)                               |
-| SUBSCRIPTION_PAGE_TEMPLATE               | The template used for generating subscription info page (default: `subscription/index.html`)                             |
-| HOME_PAGE_TEMPLATE                       | Decoy page template (default: `home/index.html`)                                                                         |
-| TELEGRAM_API_TOKEN                       | Telegram bot API token  (get token from [@botfather](https://t.me/botfather))                                            |
-| TELEGRAM_ADMIN_ID                        | Numeric Telegram ID of admin (use [@userinfobot](https://t.me/userinfobot) to found your ID)                             |
-| TELEGRAM_PROXY_URL                       | Run Telegram Bot over proxy                                                                                              |
-| JWT_ACCESS_TOKEN_EXPIRE_MINUTES          | Expire time for the Access Tokens in minutes, `0` considered as infinite (default: `1440`)                               |
-| DOCS                                     | Whether API documents should be available on `/docs` and `/redoc` or not (default: `False`)                              |
-| DEBUG                                    | Debug mode for development (default: `False`)                                                                            |
-| WEBHOOK_ADDRESS                          | Webhook address to send notifications to. Webhook notifications will be sent if this value was set.                      |
-| WEBHOOK_SECRET                           | Webhook secret will be sent with each request as `x-webhook-secret` in the header (default: `None`)                      |
-| NUMBER_OF_RECURRENT_NOTIFICATIONS        | How many times to retry if an error detected in sending a notification (default: `3`)                                    |
-| RECURRENT_NOTIFICATIONS_TIMEOUT          | Timeout between each retry if an error detected in sending a notification in seconds (default: `180`)                    |
-| NOTIFY_REACHED_USAGE_PERCENT             | At which percentage of usage to send the warning notification (default: `80`)                                            |
-| NOTIFY_DAYS_LEFT                         | When to send warning notifaction about expiration (default: `3`)                                                         |
-| USERS_AUTODELETE_DAYS                    | Delete expired (and optionally limited users) after this many days (Negative values disable this feature, default: `-1`) |
-| USER_AUTODELETE_INCLUDE_LIMITED_ACCOUNTS | Whether to include limited accounts in the auto-delete feature (default: `False`)                                        |
-| USE_CUSTOM_JSON_DEFAULT                  | Enable custom JSON config for ALL supported clients (default: `False`)                                                   |
-| USE_CUSTOM_JSON_FOR_V2RAYNG              | Enable custom JSON config only for V2rayNG (default: `False`)                                                            |
-| USE_CUSTOM_JSON_FOR_STREISAND            | Enable custom JSON config only for Streisand (default: `False`)                                                          |
-| USE_CUSTOM_JSON_FOR_V2RAYN               | Enable custom JSON config only for V2rayN (default: `False`)                                                             |
-
-
-# Documentation
-
-The [Marzban Documentation](https://gozargah.github.io/marzban) provides all the essential guides to get you started, available in three languages: Farsi, English, and Russian. This documentation requires significant effort to cover all aspects of the project comprehensively. We welcome and appreciate your contributions to help us improve it. You can contribute on this [GitHub repository](https://github.com/Gozargah/gozargah.github.io).
-
-
-# API
-
-Marzban provides a REST API that enables developers to interact with Marzban services programmatically. To view the API documentation in Swagger UI or ReDoc, set the configuration variable `DOCS=True` and navigate to the `/docs` and `/redoc`.
-
-
-# Backup
-
-It's always a good idea to backup your Marzban files regularly to prevent data loss in case of system failures or accidental deletion. Here are the steps to backup Marzban:
-
-1. By default, all Marzban important files are saved in `/var/lib/marzban` (Docker versions). Copy the entire `/var/lib/marzban` directory to a backup location of your choice, such as an external hard drive or cloud storage.
-2. Additionally, make sure to backup your env file, which contains your configuration variables, and also, your Xray config file. If you installed Marzban using marzban-scripts (recommended installation approach), the env and other configurations should be inside `/opt/marzban/` directory.
-
-Marzban's backup service efficiently zips all necessary files and sends them to your specified Telegram bot. It supports SQLite, MySQL, and MariaDB databases. One of its key features is automation, allowing you to schedule backups every hour. There are no limitations concerning Telegram's upload limits for bots; if a file exceeds the limit, it will be split and sent in multiple parts. Additionally, you can initiate an immediate backup at any time.
-
-Install the Latest Version of Marzban Command:
-```bash
-sudo bash -c "$(curl -sL https://github.com/Gozargah/Marzban-scripts/raw/master/marzban.sh)" @ install-script
-```
-
-Setup the Backup Service:
-```bash
-marzban backup-service
-```
-
-Get an Immediate Backup:
-```bash
-marzban backup
-```
-
-By following these steps, you can ensure that you have a backup of all your Marzban files and data, as well as your configuration variables and Xray configuration, in case you need to restore them in the future. Remember to update your backups regularly to keep them up-to-date.
-
-# Telegram Bot
-
-Marzban comes with an integrated Telegram bot that can handle server management, user creation and removal, and send notifications. This bot can be easily enabled by following a few simple steps, and it provides a convenient way to interact with Marzban without having to log in to the server every time.
-
-To enable Telegram Bot:
-
-1. set `TELEGRAM_API_TOKEN` to your bot's API Token
-2. set `TELEGRAM_ADMIN_ID` to your Telegram account's numeric ID, you can get your ID from [@userinfobot](https://t.me/userinfobot)
-
-# Marzban CLI
-
-Marzban comes with an integrated CLI named `marzban-cli` which allows administrators to have direct interaction with it.
-
-If you've installed Marzban using easy install script, you can access the cli commands by running
-
-```bash
-marzban cli [OPTIONS] COMMAND [ARGS]...
-```
-
-For more information, You can read [Marzban CLI's documentation](./cli/README.md).
-
-# Marzban Node
-
-The Marzban project introduces the [Marzban-node](https://github.com/gozargah/marzban-node), which revolutionizes infrastructure distribution. With Marzban-node, you can distribute your infrastructure across multiple locations, unlocking benefits such as redundancy, high availability, scalability, flexibility. Marzban-node empowers users to connect to different servers, offering them the flexibility to choose and connect to multiple servers instead of being limited to only one server.
-For more detailed information and installation instructions, please refer to the [Marzban-node official documentation](https://github.com/gozargah/marzban-node)
-
-# Webhook notifications
-
-You can set a webhook address and Marzban will send the notifications to that address.
-
-the requests will be sent as a post request to the adress provided by `WEBHOOK_ADDRESS` with `WEBHOOK_SECRET` as `x-webhook-secret` in the headers.
-
-Example request sent from Marzban:
-
-```
-Headers:
-Host: 0.0.0.0:9000
-User-Agent: python-requests/2.28.1
-Accept-Encoding: gzip, deflate
-Accept: */*
-Connection: keep-alive
-x-webhook-secret: something-very-very-secret
-Content-Length: 107
-Content-Type: application/json
-
-
-
-Body:
-{"username": "marzban_test_user", "action": "user_updated", "enqueued_at": 1680506457.636369, "tries": 0}
-```
-
-Different action typs are: `user_created`, `user_updated`, `user_deleted`, `user_limited`, `user_expired`, `user_disabled`, `user_enabled`
-
-# Donation
-
-If you found Marzban useful and would like to support its development, you can make a donation in one of the following crypto networks:
-
-- TRON network (TRC20): `TX8kJoDcowQPBFTYHAJR36GyoUKP1Xwzkb`
-- ETH, BNB, MATIC network (ERC20, BEP20): `0xFdc9ad32454FA4fc4733270FCc12ddBFb68b83F7`
-- Bitcoin network: `bc1qpys2nefgsjjgae3g3gqy9crsv3h3rm96tlkz0v`
-- Dogecoin network: `DJAocBAu8y6LwhDKUktLAyzV8xyoFeHH6R`
-- TON network: `EQAVf-7hAXHlF-jmrKE44oBwN7HGQFVBLAtrOsev5K4qR4P8`
-
-Thank you for your support!
-
-# License
-
-Made in [Unknown!] and Published under [AGPL-3.0](./LICENSE).
-
-# Contributors
-
-We ❤️‍🔥 contributors! If you'd like to contribute, please check out our [Contributing Guidelines](CONTRIBUTING.md) and feel free to submit a pull request or open an issue. We also welcome you to join our [Telegram](https://t.me/gozargah_marzban) group for either support or contributing guidance.
-
-Check [open issues](https://github.com/gozargah/marzban/issues) to help the progress of this project.
-
-<p align="center">
-Thanks to the all contributors who have helped improve Marzban:
-</p>
-<p align="center">
-<a href="https://github.com/Gozargah/Marzban/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=Gozargah/Marzban" />
-</a>
-</p>
-<p align="center">
-  Made with <a rel="noopener noreferrer" target="_blank" href="https://contrib.rocks">contrib.rocks</a>
-</p>
+Published under [AGPL-3.0](./LICENSE).
