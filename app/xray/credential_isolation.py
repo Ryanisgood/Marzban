@@ -24,6 +24,10 @@ class CredentialDuplicate:
     users: tuple[str, ...]
 
 
+class CredentialConflictError(ValueError):
+    pass
+
+
 def credential_fingerprint(credential) -> str:
     return sha256(str(credential).encode()).hexdigest()[:12]
 
@@ -69,6 +73,28 @@ def find_duplicate_credentials(users) -> list[CredentialDuplicate]:
         for key, usernames in sorted(users_by_key.items())
         if len(usernames) > 1
     ]
+
+
+def validate_unique_credentials(pending_user, users) -> None:
+    if pending_user.status not in RUNNABLE_STATUSES:
+        return
+
+    pending_keys = set(credential_keys_for_user(pending_user))
+    for user in users:
+        if user is pending_user:
+            continue
+        if user.id is not None and user.id == pending_user.id:
+            continue
+        if user.status not in RUNNABLE_STATUSES:
+            continue
+        overlap = pending_keys & set(credential_keys_for_user(user))
+        if not overlap:
+            continue
+        key = sorted(overlap)[0]
+        raise CredentialConflictError(
+            f"Duplicate {key.protocol} credential on inbound "
+            f"{key.inbound_tag} conflicts with user {user.username}"
+        )
 
 
 def repair_duplicate_credentials(users) -> list[str]:

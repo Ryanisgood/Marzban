@@ -4,19 +4,30 @@ from datetime import datetime
 os.environ.setdefault("XRAY_EXECUTABLE_PATH", "/bin/echo")
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app import xray
+from app.db import crud
+from app.db.base import Base
 from app.db.models import Proxy, ProxyInbound, User as DBUser
 from app.models.proxy import ProxyTypes
-from app.models.user import UserDataLimitResetStrategy, UserStatus
+from app.models.user import (
+    UserCreate,
+    UserDataLimitResetStrategy,
+    UserStatus,
+)
 from app.xray.config import XRayConfig
 import app.xray.credential_isolation as credential_isolation
 from app.xray.credential_isolation import (
     CredentialDuplicate,
+    CredentialConflictError,
     CredentialKey,
     credential_keys_for_user,
     find_duplicate_credentials,
     repair_duplicate_credentials,
+    validate_unique_credentials,
 )
 
 
@@ -83,6 +94,30 @@ def _proxy(proxy_type, settings, excluded=()):
     proxy = Proxy(type=proxy_type, settings=settings)
     proxy.excluded_inbounds = [ProxyInbound(tag=tag) for tag in excluded]
     return proxy
+
+
+def _db_session():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    return Session()
+
+
+def _user_create(username, proxy_type, settings, status=UserStatus.active):
+    inbound_tags = [
+        inbound["tag"]
+        for inbound in _config().inbounds_by_protocol[proxy_type]
+    ]
+    return UserCreate(
+        username=username,
+        status=status,
+        proxies={proxy_type: settings},
+        inbounds={proxy_type: inbound_tags},
+    )
 
 
 def test_credential_keys_include_effective_inbound_and_protocol_credentials(
@@ -354,3 +389,114 @@ def test_repair_duplicate_credentials_sanitizes_invalid_settings_error(
     assert "VMess" in message
     assert "bob" in message
     assert "raw-secret" not in message
+
+
+def test_validate_unique_credentials_rejects_duplicate_runnable_user(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    existing = _user(
+        1,
+        "alice",
+        proxies=[_proxy(ProxyTypes.Trojan, {"password": "same"})],
+    )
+    pending = _user(
+        2,
+        "bob",
+        proxies=[_proxy(ProxyTypes.Trojan, {"password": "same"})],
+    )
+
+    with pytest.raises(CredentialConflictError) as exc_info:
+        validate_unique_credentials(pending, [existing, pending])
+
+    message = str(exc_info.value)
+    assert "trojan" in message
+    assert "Trojan" in message
+    assert "alice" in message
+    assert "same" not in message
+
+
+def test_validate_unique_credentials_allows_same_user_unchanged(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    user = _user(
+        1,
+        "alice",
+        proxies=[
+            _proxy(
+                ProxyTypes.VLESS,
+                {"id": "33333333-3333-3333-3333-333333333333"},
+            )
+        ],
+    )
+
+    validate_unique_credentials(user, [user])
+
+
+def test_validate_unique_credentials_ignores_non_runnable_users(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    existing = _user(
+        1,
+        "alice",
+        status=UserStatus.disabled,
+        proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+    )
+    pending = _user(
+        2,
+        "bob",
+        proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+    )
+
+    validate_unique_credentials(pending, [existing, pending])
+
+
+def test_create_user_rejects_duplicate_runnable_credentials(monkeypatch):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.Trojan, {"password": "same"}
+            ),
+        )
+
+        with pytest.raises(CredentialConflictError):
+            crud.create_user(
+                db,
+                _user_create(
+                    "bob", ProxyTypes.Trojan, {"password": "same"}
+                ),
+            )
+    finally:
+        db.close()
+
+
+def test_update_user_status_rejects_duplicate_when_entering_runnable(
+    monkeypatch,
+):
+    monkeypatch.setattr(xray, "config", _config())
+    db = _db_session()
+    try:
+        crud.create_user(
+            db,
+            _user_create(
+                "alice", ProxyTypes.AnyTLS, {"password": "same"}
+            ),
+        )
+        bob = _user(
+            2,
+            "bob",
+            status=UserStatus.disabled,
+            proxies=[_proxy(ProxyTypes.AnyTLS, {"password": "same"})],
+        )
+        db.add(bob)
+        db.commit()
+
+        with pytest.raises(CredentialConflictError):
+            crud.update_user_status(db, bob, UserStatus.active)
+    finally:
+        db.close()

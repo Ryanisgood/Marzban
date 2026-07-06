@@ -46,6 +46,10 @@ from app.models.user import (
 )
 from app.models.user_template import UserTemplateCreate, UserTemplateModify
 from app.utils.helpers import calculate_expiration_days, calculate_usage_percent
+from app.xray.credential_isolation import (
+    RUNNABLE_STATUSES,
+    validate_unique_credentials,
+)
 from config import NOTIFY_DAYS_LEFT, NOTIFY_REACHED_USAGE_PERCENT, USERS_AUTODELETE_DAYS
 
 
@@ -368,6 +372,11 @@ def get_users_count(db: Session, status: UserStatus = None, admin: Admin = None)
     return query.count()
 
 
+def _validate_user_credentials_if_runnable(db: Session, dbuser: User) -> None:
+    if dbuser.status in RUNNABLE_STATUSES:
+        validate_unique_credentials(dbuser, [*get_users(db), dbuser])
+
+
 def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
     """
     Creates a new user with provided details.
@@ -411,6 +420,7 @@ def create_user(db: Session, user: UserCreate, admin: Admin = None) -> User:
             fire_on_either=user.next_plan.fire_on_either,
         ) if user.next_plan else None
     )
+    _validate_user_credentials_if_runnable(db, dbuser)
     db.add(dbuser)
     db.commit()
     db.refresh(dbuser)
@@ -541,6 +551,7 @@ def update_user(db: Session, dbuser: User, modify: UserModify) -> User:
 
     dbuser.edit_at = datetime.utcnow()
 
+    _validate_user_credentials_if_runnable(db, dbuser)
     db.commit()
     db.refresh(dbuser)
     return dbuser
@@ -833,6 +844,7 @@ def update_user_status(db: Session, dbuser: User, status: UserStatus) -> User:
     """
     dbuser.status = status
     dbuser.last_status_change = datetime.utcnow()
+    _validate_user_credentials_if_runnable(db, dbuser)
     db.commit()
     db.refresh(dbuser)
     return dbuser

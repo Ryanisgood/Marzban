@@ -18,6 +18,7 @@ from app.models.user import (
     UserUsagesResponse,
 )
 from app.utils import report, responses
+from app.xray.credential_isolation import CredentialConflictError
 
 router = APIRouter(tags=["User"], prefix="/api", responses={401: responses._401})
 
@@ -62,6 +63,9 @@ def add_user(
         dbuser = crud.create_user(
             db, new_user, admin=crud.get_admin(db, admin.username)
         )
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="User already exists")
@@ -114,7 +118,11 @@ def modify_user(
 
     old_status = dbuser.status
     old_reload_inbounds = _config_reload_inbounds(dbuser)
-    dbuser = crud.update_user(db, dbuser, modified_user)
+    try:
+        dbuser = crud.update_user(db, dbuser, modified_user)
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
     user = UserResponse.model_validate(dbuser)
     affected_reload_inbounds = old_reload_inbounds | _config_reload_inbounds(dbuser)
 
@@ -204,7 +212,11 @@ def revoke_user_subscription(
     admin: Admin = Depends(Admin.get_current),
 ):
     """Revoke users subscription (Subscription link and proxies)"""
-    dbuser = crud.revoke_user_sub(db=db, dbuser=dbuser)
+    try:
+        dbuser = crud.revoke_user_sub(db=db, dbuser=dbuser)
+    except CredentialConflictError as err:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(err))
 
     if dbuser.status in [UserStatus.active, UserStatus.on_hold]:
         bg.add_task(xray.operations.update_user, dbuser=dbuser)
